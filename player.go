@@ -310,11 +310,18 @@ func (p *Player) Seek(position time.Duration) error {
 	}
 
 	p.copyFrame(frame)
-	start, err := frame.PresentationOffset()
-	if err != nil {
-		panic(err)
+	if frame != nil {
+		start, err := frame.PresentationOffset()
+		if err != nil {
+			panic(err)
+		}
+		p.currentPresOffset = start
+	} else {
+		p.currentPresOffset, err = p.controller.Position()
+		if err != nil {
+			return err
+		}
 	}
-	p.currentPresOffset = start
 	return nil
 }
 

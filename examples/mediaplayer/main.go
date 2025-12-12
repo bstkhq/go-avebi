@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -47,7 +48,8 @@ func main() {
 		panic(err)
 	}
 
-	videoPlayer, err := avebi.NewPlayer(path) // alternatively: avebi.NewPlayerWithoutAudio(path)
+	videoPlayer, err := avebi.NewPlayer(path)
+	//videoPlayer, err := avebi.NewPlayerWithoutAudio(path)
 	if err != nil {
 		panic(err)
 	}
@@ -106,6 +108,11 @@ func (m *MediaPlayer) Update() error {
 	if err != nil {
 		return err
 	}
+	secsf := m.lastPosition.Seconds()
+	secs, millis := math.Modf(secsf)
+	mins := int(secs) / 60
+	secs -= float64(mins) * 60
+	ebiten.SetWindowTitle("avebi/mediaplayer " + fmt.Sprintf("[%02d:%02d.%03d]", mins, int(secs), int(millis*1000)))
 
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		err := m.videoPlayer.Close()
@@ -113,6 +120,23 @@ func (m *MediaPlayer) Update() error {
 			return err
 		}
 		return ebiten.Termination
+	}
+
+	if inpututil.IsKeyJustPressed(ebiten.KeyArrowLeft) {
+		if err := m.videoPlayer.Seek(max(m.lastPosition-5*time.Second, 0)); err != nil {
+			return err
+		}
+	} else if inpututil.IsKeyJustPressed(ebiten.KeyArrowRight) {
+		if err := m.videoPlayer.Seek(max(m.lastPosition+5*time.Second, 0)); err != nil {
+			return err
+		}
+	}
+
+	if inpututil.IsKeyJustPressed(ebiten.KeyU) {
+		err := m.videoPlayer.Pause()
+		if err != nil {
+			return err
+		}
 	}
 
 	if inpututil.IsKeyJustPressed(ebiten.KeyP) || inpututil.IsKeyJustPressed(ebiten.KeySpace) {

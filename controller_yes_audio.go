@@ -1,6 +1,7 @@
 package avebi
 
 import (
+	"fmt"
 	"io"
 	"math"
 	"sync"
@@ -154,38 +155,58 @@ func (c *videoWithAudioController) Error() error {
 func (c *videoWithAudioController) Play() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	if c.state != Playing {
-		if c.state == Stopped {
-			err := c.media.OpenDecode()
-			if err != nil {
-				return err
-			}
-			err = c.video.Open()
-			if err != nil {
-				return err
-			}
-			err = c.audio.Open()
-			if err != nil {
-				return err
-			}
+	return c.noLockPlay()
+}
 
-			// necessary if we had a natural end-of-video stop
-			c.leftoverAudio = c.leftoverAudio[:0]
-			c.leftoverVideo = c.leftoverVideo[:0]
-			c.lastReadFrame = nil
-			c.firstAudioFrameOffsetOnPlay = 0
-			c.decodeErr = nil
-		}
-
-		if c.audioPlayer == nil {
-			err := c.noLockCreateAudioPlayer()
-			if err != nil {
-				return err
-			}
-		}
-		c.state = Playing
-		c.audioPlayer.Play()
+func (c *videoWithAudioController) noLockPlay() error {
+	if c.state == Playing {
+		return nil
 	}
+
+	if err := c.noLockGetReadyToPlay(); err != nil {
+		return err
+	}
+
+	c.state = Playing
+	c.audioPlayer.Play()
+	return nil
+}
+
+func (c *videoWithAudioController) noLockPrepareReset() {
+	c.leftoverAudio = c.leftoverAudio[:0]
+	c.leftoverVideo = c.leftoverVideo[:0]
+	c.lastReadFrame = nil
+	c.firstAudioFrameOffsetOnPlay = 0
+	c.staticPosition = 0
+	c.decodeErr = nil
+}
+
+func (c *videoWithAudioController) noLockGetReadyToPlay() error {
+	if c.state == Stopped {
+		err := c.media.OpenDecode()
+		if err != nil {
+			return err
+		}
+		err = c.video.Open()
+		if err != nil {
+			return err
+		}
+		err = c.audio.Open()
+		if err != nil {
+			return err
+		}
+
+		// necessary if we had a natural end-of-video stop
+		c.noLockPrepareReset()
+	}
+
+	if c.audioPlayer == nil {
+		err := c.noLockCreateAudioPlayer()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -242,8 +263,70 @@ func (c *videoWithAudioController) State() (PlaybackState, error) {
 	return c.state, nil
 }
 
-func (c *videoWithAudioController) Seek(time.Duration) (*reisen.VideoFrame, error) {
-	panic("unimplemented")
+func (c *videoWithAudioController) Seek(offset time.Duration) (*reisen.VideoFrame, error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	preState := c.state
+
+	// into stop states
+	if offset <= 0 || offset >= c.duration {
+		if err := c.noLockStop(stopModeManual); err != nil {
+			return nil, err
+		}
+
+		if offset >= c.duration {
+			c.staticPosition = c.duration
+		}
+
+		if offset <= 0 {
+			if preState != Playing {
+				return nil, nil
+			}
+			return nil, c.noLockPlay()
+		}
+	}
+
+	// from stop states
+	if c.state == Stopped {
+		if err := c.noLockGetReadyToPlay(); err != nil {
+			return nil, err
+		}
+		c.state = Paused
+	}
+
+	// normal offsets
+	if err := c.video.Rewind(offset); err != nil {
+		return nil, err
+	}
+	// if err := c.audio.Rewind(offset); err != nil {
+	// 	return nil, err
+	// }
+
+	c.noLockPrepareReset()
+	if err := c.internalReadFrame(false); err != nil {
+		return nil, err
+	}
+	if len(c.leftoverVideo) > 0 {
+		c.lastReadFrame = c.leftoverVideo[0]
+		pos, _ := c.lastReadFrame.PresentationOffset()
+		fmt.Printf("last read frame: %.02f\n", pos.Seconds())
+		copy(c.leftoverVideo, c.leftoverVideo[1:])
+		c.leftoverVideo = c.leftoverVideo[:len(c.leftoverVideo)-1]
+	}
+	c.staticPosition, _ = c.lastReadFrame.PresentationOffset()
+
+	if preState == Playing {
+		if err := c.noLockHackyAudioReset(); err != nil {
+			return nil, err
+		}
+	} else { // assume Paused
+		if err := c.noLockEnsureAudioHalt(); err != nil {
+			return nil, err
+		}
+	}
+
+	return c.lastReadFrame, nil
 }
 
 func (c *videoWithAudioController) Position() (time.Duration, error) {
@@ -387,6 +470,7 @@ func (c *videoWithAudioController) noLockStop(videoStopMode stopMode) error {
 		c.staticPosition = 0
 		c.lastReadFrame = nil
 		c.leftoverVideo = c.leftoverVideo[:0]
+		c.leftoverAudio = c.leftoverAudio[:0]
 		c.videoPendingLoop = false
 	}
 
@@ -491,7 +575,7 @@ func (c *videoWithAudioController) Read(buffer []byte) (int, error) {
 	// decode audio and move it into the buffer
 	for len(buffer) > 0 {
 		// try to decode one audio frame (data is placed on c.leftoverAudio)
-		if err := c.internalReadAudioFrame(); err != nil {
+		if err := c.internalReadFrame(true); err != nil {
 			// real decode error: remember it, gracefully stop, and tell Ebiten
 			// that the stream has finished (EOF), without crashing RunGame.
 			return servedBytes, c.readHandleError(err)
@@ -596,8 +680,8 @@ func (c *videoWithAudioController) noLockHackyAudioReset() error {
 	return nil
 }
 
-func (c *videoWithAudioController) internalReadAudioFrame() error {
-	// read packets until we come across the next audio frame packet
+func (c *videoWithAudioController) internalReadFrame(lookForAudioFrame bool) error {
+	// read packets until we come across the next relevant frame packet
 	for {
 		packet, packetFound, err := c.media.ReadPacket()
 		if err != nil {
@@ -623,6 +707,9 @@ func (c *videoWithAudioController) internalReadAudioFrame() error {
 			_ = frameFound // frameFound can be true while frame is nil: that's a frame skip
 			if frame != nil {
 				c.leftoverVideo = append(c.leftoverVideo, frame)
+				if !lookForAudioFrame {
+					return nil
+				}
 			}
 		case reisen.StreamAudio:
 			if packet.StreamIndex() != c.audio.Index() {
@@ -650,7 +737,9 @@ func (c *videoWithAudioController) internalReadAudioFrame() error {
 					c.needsFirstAudioFrameOffset = false
 				}
 
-				return nil
+				if lookForAudioFrame {
+					return nil
+				}
 			}
 		default:
 			// ignore other packets (they exist and I don't know what they are)
