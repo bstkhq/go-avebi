@@ -2,6 +2,8 @@ module github.com/erparts/go-avebi
 
 go 1.23.2
 
+replace github.com/erparts/reisen v0.0.0-20250729152830-da1435d66cf7 => github.com/tinne26/reisen v0.0.0-20260121074900-89b1d81f99d8
+
 require (
 	github.com/erparts/reisen v0.0.0-20250729152830-da1435d66cf7
 	github.com/hajimehoshi/ebiten/v2 v2.8.3
