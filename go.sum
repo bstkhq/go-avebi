@@ -6,8 +6,8 @@ github.com/ebitengine/oto/v3 v3.3.1 h1:d4McwGQuXOT0GL7bA5g9ZnaUEIEjQvG3hafzMy+T3
 github.com/ebitengine/oto/v3 v3.3.1/go.mod h1:MZeb/lwoC4DCOdiTIxYezrURTw7EvK/yF863+tmBI+U=
 github.com/ebitengine/purego v0.8.0 h1:JbqvnEzRvPpxhCJzJJ2y0RbiZ8nyjccVUrSM3q+GvvE=
 github.com/ebitengine/purego v0.8.0/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
-github.com/erparts/reisen v0.0.0-20250729152830-da1435d66cf7 h1:uML/tgNw5ZAZ+fVVR0nSh/7fIhjeIXPz4rNcFRK8NUo=
-github.com/erparts/reisen v0.0.0-20250729152830-da1435d66cf7/go.mod h1:+PhcXg6q0XnIhAR6NHoSmBO2kJ7Jk18l5uRgU/4dpDM=
+github.com/erparts/reisen v0.0.0-20260122092952-efce92f0fc77 h1:shbGguC9EO7IKNL97DIHhDG/OaLlPs2HisTrwYCrvCA=
+github.com/erparts/reisen v0.0.0-20260122092952-efce92f0fc77/go.mod h1:+PhcXg6q0XnIhAR6NHoSmBO2kJ7Jk18l5uRgU/4dpDM=
 github.com/hajimehoshi/ebiten/v2 v2.8.3 h1:AKHqj3QbQMzNEhK33MMJeRwXm9UzftrUUo6AWwFV258=
 github.com/hajimehoshi/ebiten/v2 v2.8.3/go.mod h1:SXx/whkvpfsavGo6lvZykprerakl+8Uo1X8d2U5aAnA=
 github.com/jezek/xgb v1.1.1 h1:bE/r8ZZtSv7l9gk6nU0mYx51aXrvnyb44892TwSaqS4=

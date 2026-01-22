@@ -2,6 +2,7 @@ package avebi
 
 import (
 	"errors"
+	"fmt"
 	"image/color"
 	"path/filepath"
 	"time"
@@ -55,24 +56,52 @@ type Player struct {
 // Like [NewPlayer](), but ignoring audio streams.
 func NewPlayerWithoutAudio(videoFilename string) (*Player, error) {
 	ignoreAudio := true
-	return newPlayer(videoFilename, ignoreAudio, false)
+	return newPlayer(videoFilename, ignoreAudio, nil)
 }
 
 // Creates a new video [Player]. TODO: ideally we would use io.ReadSeeker,
 // but reisen only has support for explicit filenames.
 func NewPlayer(videoFilename string) (*Player, error) {
 	ignoreAudio := false
-	return newPlayer(videoFilename, ignoreAudio, false)
+	return newPlayer(videoFilename, ignoreAudio, nil)
 }
 
 // Like [NewPlayer](), but for live streams.
 func NewStreamPlayer(videoFilename string) (*Player, error) {
-	return newPlayer(videoFilename, false, true)
+	return NewStreamPlayerWithOptions(videoFilename, nil)
 }
 
-func newPlayer(videoFilename string, ignoreAudio bool, isStream bool) (*Player, error) {
+type StreamOptions struct {
+	// ConnTimeout defines the timeout for the initial connection attempt.
+	ConnTimeout time.Duration
+
+	// ReadTimeout defines the max blocking time for the internal video packet
+	// reads. This affects Close() max blocking time, as Close() needs to wait
+	// for packet reads to finish. If unset, a default of 200ms will be used.
+	ReadTimeout time.Duration
+}
+
+func NewStreamPlayerWithOptions(videoFilename string, options *StreamOptions) (*Player, error) {
+	if options == nil {
+		options = &StreamOptions{}
+	}
+	if options.ReadTimeout == 0 {
+		options.ReadTimeout = 200 * time.Millisecond
+	}
+	return newPlayer(videoFilename, true, options)
+}
+
+func newPlayer(videoFilename string, ignoreAudio bool, streamOptions *StreamOptions) (*Player, error) {
 	// initialize stream
-	container, err := reisen.NewMedia(videoFilename)
+	var container *reisen.Media
+	var err error
+
+	if streamOptions != nil && streamOptions.ConnTimeout != 0 {
+		mediaOpts := reisen.Options{Timeout: streamOptions.ConnTimeout}
+		container, err = reisen.NewMediaWithOptions(videoFilename, &mediaOpts)
+	} else {
+		container, err = reisen.NewMedia(videoFilename)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -96,8 +125,8 @@ func newPlayer(videoFilename string, ignoreAudio bool, isStream bool) (*Player, 
 	var controller videoController
 
 	switch {
-	case isStream:
-		controller, err = newStreamVideoController(container, videoStream)
+	case streamOptions != nil:
+		controller, err = newStreamVideoController(container, videoStream, streamOptions)
 	case len(audioStreams) > 0 && !ignoreAudio:
 		controller, err = newVideoWithAudioController(container, videoStream, audioStreams[0])
 	default:
@@ -109,7 +138,11 @@ func newPlayer(videoFilename string, ignoreAudio bool, isStream bool) (*Player, 
 	}
 
 	// create video player
-	img := ebiten.NewImage(videoStream.Width(), videoStream.Height())
+	w, h := videoStream.Width(), videoStream.Height()
+	if w == 0 || h == 0 {
+		return nil, fmt.Errorf("invalid stream resolution %dx%d", w, h)
+	}
+	img := ebiten.NewImage(w, h)
 	img.Fill(color.Black)
 	return &Player{
 		currentFrame:  img,
@@ -158,6 +191,13 @@ func (p *Player) CurrentFrame() (*ebiten.Image, error) {
 		return p.currentFrame, nil
 	}
 	return p.currentFrame, nil
+}
+
+// LastPresentationOffset returns the presentation offset for the last frame obtained
+// with [Player.CurrentFrame](). This is a low-level function intended mainly for stream
+// health checks and debug.
+func (p *Player) LastPresentationOffset() time.Duration {
+	return p.currentPresOffset
 }
 
 // Advances the video stream by one frame. This can be used while a video is paused to

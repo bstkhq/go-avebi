@@ -45,6 +45,7 @@ type streamVideoController struct {
 	mutex  sync.Mutex
 	media  *reisen.Media
 	stream *reisen.VideoStream
+	opts   *StreamOptions
 
 	state             PlaybackState
 	referenceTime     time.Time
@@ -64,15 +65,20 @@ type streamVideoController struct {
 }
 
 // newStreamVideoController constructs a controller for a live video stream.
-// The provided media and video stream must be non-nil and unopened. The
-// controller is created in Stopped state; call Play() to start.
-func newStreamVideoController(media *reisen.Media, s *reisen.VideoStream) (videoController, error) {
+// The provided media and video stream must be non-nil and unopened. opts must
+// also be non-nil. The controller is created in Stopped state; call Play() to
+// start.
+func newStreamVideoController(media *reisen.Media, s *reisen.VideoStream, opts *StreamOptions) (videoController, error) {
+	if opts == nil {
+		panic("precondition violation")
+	}
 	if media == nil || s == nil {
 		return nil, fmt.Errorf("nil media or video stream")
 	}
 	return &streamVideoController{
 		media:  media,
 		stream: s,
+		opts:   opts,
 		state:  Stopped,
 		jitter: defaultJitter,
 	}, nil
@@ -179,13 +185,13 @@ func (c *streamVideoController) Close() error {
 func (c *streamVideoController) noLockStop(_ stopMode) error {
 	if c.stopCh != nil {
 		close(c.stopCh)
-		c.stopCh = nil
 	}
 
 	// Release the mutex while waiting for goroutines to terminate.
 	c.mutex.Unlock()
 	c.wg.Wait()
 	c.mutex.Lock()
+	c.stopCh = nil
 
 	if c.decodedCh != nil {
 		close(c.decodedCh)
@@ -233,12 +239,12 @@ func (c *streamVideoController) Seek(_ time.Duration) (*reisen.VideoFrame, error
 }
 
 // GetLooping always returns false for live streams.
-func (_ *streamVideoController) GetLooping() bool {
+func (*streamVideoController) GetLooping() bool {
 	return false
 }
 
 // SetLooping is a no-op for live streams.
-func (_ *streamVideoController) SetLooping(_ bool) {}
+func (*streamVideoController) SetLooping(bool) {}
 
 // CurrentVideoFrame returns the most recently scheduled frame. The boolean
 // return value is unused here and remains false for compatibility with other
@@ -274,7 +280,7 @@ func (c *streamVideoController) decodeLoop() {
 		default:
 		}
 
-		packet, ok, err := c.media.ReadPacket()
+		packet, ok, err := c.media.ReadPacketWithTimeout(c.opts.ReadTimeout)
 		if err != nil {
 			// Report error if a consumer is listening, but do not block.
 			select {
