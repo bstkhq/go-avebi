@@ -455,7 +455,8 @@ func (c *videoWithAudioController) readHandleError(err error) error {
 		c.decodeErr = err
 	}
 	// we ignore errors from noLockStop here to avoid cascading failures
-	_ = c.noLockStop(stopModeEndOfVideo)
+	c.audioPlayer = nil // noLockStop requires c.audioPlayer = nil if called from Read
+	_ = c.noLockStop(stopModeManual)
 	return io.EOF
 }
 
