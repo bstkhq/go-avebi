@@ -24,6 +24,14 @@ go mod edit -replace=github.com/obinnaokechukwu/ffgo=github.com/erparts/ffgo@v0.
 
 Explicit ABI detection and support for FFmpeg 7 and 8 are planned separately.
 
+### Compatibility CI
+
+GitHub Actions runs the real-media and go-ebiten-mcp integration suites against
+FFmpeg 6 and 7. FFmpeg 6 is the required compatibility baseline. FFmpeg 7 uses
+the correct shared-library majors but remains an experimental, allowed-to-fail
+job until its structure ABI is supported; keeping it in the matrix makes that
+pending failure visible on every change.
+
 ## Instrumented examples
 
 Both examples use
