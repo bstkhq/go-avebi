@@ -1,0 +1,160 @@
+name: FFmpeg integration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffmpeg-integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: FFmpeg ${{ matrix.ffmpeg }} (${{ matrix.status }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ffmpeg: 6
+            status: required
+            experimental: false
+          - ffmpeg: 7
+            status: experimental
+            experimental: true
+
+    env:
+      ALSA_CONFIG_PATH: ${{ github.workspace }}/.github/alsa-pulse.conf
+      AVEBI_EXPECT_FFMPEG_MAJOR: ${{ matrix.ffmpeg }}
+      AVEBI_TEST_AUDIO: "1"
+      AVEBI_TEST_MEDIA: ${{ github.workspace }}/.ci-cache/media/av-smoke.mp4
+
+    steps:
+      - name: Check out avebi
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: Install system dependencies and FFmpeg 6
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            ffmpeg \
+            libasound2-dev \
+            libasound2-plugins \
+            libgl1-mesa-dri \
+            libgl1-mesa-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxxf86vm-dev \
+            pulseaudio \
+            pulseaudio-utils \
+            xvfb
+
+      - name: Generate H.264/AAC integration media
+        run: |
+          mkdir -p .ci-cache/media
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i testsrc2=size=320x180:rate=30 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 3 -c:v libx264 -pix_fmt yuv420p -c:a aac \
+            .ci-cache/media/av-smoke.mp4
+
+      - name: Restore FFmpeg 7.1.1 shared libraries
+        if: matrix.ffmpeg == 7
+        id: ffmpeg7-cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/ffmpeg-7.1.1
+          key: ffmpeg-7.1.1-linux-x64-h264-aac-v2
+
+      - name: Check out FFmpeg 7.1.1
+        if: matrix.ffmpeg == 7 && steps.ffmpeg7-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: FFmpeg/FFmpeg
+          ref: db69d06eeeab4f46da15030a80d539efb4503ca8
+          path: .ci/ffmpeg-7-source
+          persist-credentials: false
+
+      - name: Build FFmpeg 7.1.1 shared libraries
+        if: matrix.ffmpeg == 7 && steps.ffmpeg7-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .ci-cache/ffmpeg-7-build .ci-cache/ffmpeg-7.1.1
+          cd .ci-cache/ffmpeg-7-build
+          "$GITHUB_WORKSPACE/.ci/ffmpeg-7-source/configure" \
+            --prefix="$GITHUB_WORKSPACE/.ci-cache/ffmpeg-7.1.1" \
+            --enable-shared \
+            --disable-static \
+            --disable-programs \
+            --disable-doc \
+            --disable-debug \
+            --disable-network \
+            --disable-autodetect \
+            --disable-everything \
+            --disable-x86asm \
+            --enable-protocol=file \
+            --enable-demuxer=mov \
+            --enable-parser=aac,h264,hevc \
+            --enable-decoder=aac,h264,hevc \
+            --enable-swresample \
+            --enable-swscale
+          make -j2
+          make install
+
+      - name: Select FFmpeg runtime
+        run: |
+          if [[ "${{ matrix.ffmpeg }}" == "7" ]]; then
+            ffmpeg_lib_dir="$GITHUB_WORKSPACE/.ci-cache/ffmpeg-7.1.1/lib"
+          else
+            ffmpeg_lib_dir="/usr/lib/x86_64-linux-gnu"
+          fi
+          echo "LD_LIBRARY_PATH=$ffmpeg_lib_dir" >> "$GITHUB_ENV"
+
+      - name: Start a paced audio sink
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=avebi_ci rate=48000
+          pactl set-default-sink avebi_ci
+          pactl info
+
+      - name: Verify loaded FFmpeg ABI
+        run: >-
+          xvfb-run -a -s "-screen 0 1280x720x24"
+          go test -count=1 -run '^TestFFGORuntimeMajor$' -v .
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Run real-media integration suite
+        run: xvfb-run -a -s "-screen 0 1280x720x24" go test -count=1 ./...
+
+      - name: Run go-ebiten-mcp control and torture test
+        if: success() || matrix.experimental
+        env:
+          AVEBI_MCP_TEST_MEDIA: ${{ github.workspace }}/.ci-cache/media/av-smoke.mp4
+          AVEBI_MCP_TORTURE_CYCLES: "100"
+        run: >-
+          xvfb-run -a -s "-screen 0 1280x720x24"
+          go test -count=1
+          -run '^TestFFGOMCPIntegrationAndTorture$' -v
+          ./examples/mediaplayer
+
+      - name: Explain experimental FFmpeg 7 result
+        if: matrix.experimental && always()
+        run: >-
+          echo "::notice::FFmpeg 7 currently exercises the known pending ABI work;
+          this matrix entry is allowed to fail until that support is implemented."

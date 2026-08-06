@@ -7,9 +7,45 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/obinnaokechukwu/ffgo"
 )
+
+const expectedFFmpegMajorEnv = "AVEBI_EXPECT_FFMPEG_MAJOR"
+
+func TestFFGORuntimeMajor(t *testing.T) {
+	value := os.Getenv(expectedFFmpegMajorEnv)
+	if value == "" {
+		t.Skip("set AVEBI_EXPECT_FFMPEG_MAJOR to verify the loaded FFmpeg ABI")
+	}
+	release, err := strconv.Atoi(value)
+	if err != nil {
+		t.Fatalf("%s must be an integer: %v", expectedFFmpegMajorEnv, err)
+	}
+	want, ok := map[int][3]int{
+		6: {58, 60, 60},
+		7: {59, 61, 61},
+	}[release]
+	if !ok {
+		t.Fatalf("unsupported expected FFmpeg release %d", release)
+	}
+	if err := ffgo.Init(); err != nil {
+		t.Fatalf("initialize ffgo: %v", err)
+	}
+	avutilVersion, avcodecVersion, avformatVersion := ffgo.Version()
+	got := [3]int{
+		int(avutilVersion >> 16),
+		int(avcodecVersion >> 16),
+		int(avformatVersion >> 16),
+	}
+	t.Logf("FFmpeg %d runtime ABI: avutil=%d avcodec=%d avformat=%d", release, got[0], got[1], got[2])
+	if got != want {
+		t.Fatalf("FFmpeg %d runtime ABI = %v, want %v", release, got, want)
+	}
+}
 
 // TestFFGOBackendMedia exercises ffgo against a real media file. It is opt-in
 // so the normal test suite stays hermetic:
