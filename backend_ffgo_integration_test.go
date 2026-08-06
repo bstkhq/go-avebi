@@ -114,6 +114,109 @@ func TestFFGOPlayerWithoutAudioMedia(t *testing.T) {
 	}
 }
 
+// TestFFGOPlayerWithAudioMedia exercises the public audio controller and needs
+// a working, real-time audio sink. It is separately gated so decoder-only CI
+// can still use AVEBI_TEST_MEDIA without configuring ALSA/PipeWire:
+//
+//	AVEBI_TEST_MEDIA=/path/to/video-with-audio.mp4 AVEBI_TEST_AUDIO=1 \
+//	  go test -tags avebi_ffgo -run TestFFGOPlayerWithAudioMedia
+func TestFFGOPlayerWithAudioMedia(t *testing.T) {
+	mediaPath := os.Getenv("AVEBI_TEST_MEDIA")
+	if mediaPath == "" || os.Getenv("AVEBI_TEST_AUDIO") != "1" {
+		t.Skip("set AVEBI_TEST_MEDIA and AVEBI_TEST_AUDIO=1 to run the ffgo audio-player integration test")
+	}
+
+	if err := CreateAudioContextForMedia(mediaPath); err != nil && !errors.Is(err, ErrNonNilAudioContext) {
+		t.Fatalf("CreateAudioContextForMedia: %v", err)
+	}
+	player, err := NewPlayer(mediaPath)
+	if err != nil {
+		t.Fatalf("NewPlayer: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := player.Close(); err != nil {
+			t.Errorf("close player: %v", err)
+		}
+	})
+	if !player.HasAudio() {
+		t.Fatal("audio media was opened without an audio controller")
+	}
+
+	if err := player.Play(); err != nil {
+		t.Fatalf("Play: %v", err)
+	}
+	waitForFFGOPlayerPosition(t, player, 100*time.Millisecond, player.Duration())
+	if err := player.Pause(); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if state, err := player.State(); err != nil || state != Paused {
+		t.Fatalf("state after Pause = %v, %v; want Paused", state, err)
+	}
+
+	target := min(time.Second, player.Duration()/2)
+	if err := player.Seek(target); err != nil {
+		t.Fatalf("Seek(%s): %v", target, err)
+	}
+	if state, err := player.State(); err != nil || state != Paused {
+		t.Fatalf("state after paused seek = %v, %v; want Paused", state, err)
+	}
+	if got := player.LastPresentationOffset(); got+50*time.Millisecond < target || got > target {
+		t.Fatalf("presentation offset after A/V seek = %s, want a frame covering %s", got, target)
+	}
+
+	if err := player.Play(); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	deadline := time.Now().Add(player.Duration() + 5*time.Second)
+	for !player.HasEnded() {
+		if err := player.Error(); err != nil {
+			t.Fatalf("playback error: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("audio playback did not reach its natural end")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if state, err := player.State(); err != nil || state != Stopped {
+		t.Fatalf("state at natural end = %v, %v; want Stopped", state, err)
+	}
+
+	if err := player.Play(); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	waitForFFGOPlayerPosition(t, player, 100*time.Millisecond, player.Duration())
+	if player.HasEnded() {
+		t.Fatal("replay remained in the ended state")
+	}
+	if err := player.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if player.HasEnded() {
+		t.Fatal("manual Stop after replay was reported as a natural end")
+	}
+}
+
+func waitForFFGOPlayerPosition(t *testing.T, player *Player, minimum, maximum time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		position, err := player.Position()
+		if err != nil {
+			t.Fatalf("Position: %v", err)
+		}
+		if position >= minimum && position < maximum {
+			return
+		}
+		if err := player.Error(); err != nil {
+			t.Fatalf("playback error: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("position did not enter [%s, %s); last value %s", minimum, maximum, position)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func readAndValidateFFGOFrames(t *testing.T, decoder mediaDecoder, wantAudio bool) (bool, bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
