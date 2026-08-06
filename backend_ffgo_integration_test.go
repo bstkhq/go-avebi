@@ -1,4 +1,4 @@
-//go:build avebi_ffgo && !ios && !android && (amd64 || arm64)
+//go:build !ios && !android && (amd64 || arm64)
 
 package avebi
 
@@ -14,7 +14,7 @@ import (
 // TestFFGOBackendMedia exercises ffgo against a real media file. It is opt-in
 // so the normal test suite stays hermetic:
 //
-//	AVEBI_TEST_MEDIA=/path/to/video.mp4 go test -tags avebi_ffgo -run TestFFGOBackendMedia
+//	AVEBI_TEST_MEDIA=/path/to/video.mp4 go test -run TestFFGOBackendMedia
 func TestFFGOBackendMedia(t *testing.T) {
 	mediaPath := os.Getenv("AVEBI_TEST_MEDIA")
 	if mediaPath == "" {
@@ -119,7 +119,7 @@ func TestFFGOPlayerWithoutAudioMedia(t *testing.T) {
 // can still use AVEBI_TEST_MEDIA without configuring ALSA/PipeWire:
 //
 //	AVEBI_TEST_MEDIA=/path/to/video-with-audio.mp4 AVEBI_TEST_AUDIO=1 \
-//	  go test -tags avebi_ffgo -run TestFFGOPlayerWithAudioMedia
+//	  go test -run TestFFGOPlayerWithAudioMedia
 func TestFFGOPlayerWithAudioMedia(t *testing.T) {
 	mediaPath := os.Getenv("AVEBI_TEST_MEDIA")
 	if mediaPath == "" || os.Getenv("AVEBI_TEST_AUDIO") != "1" {

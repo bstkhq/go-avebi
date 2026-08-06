@@ -1,4 +1,4 @@
-//go:build avebi_ffgo && !ios && !android && (amd64 || arm64)
+//go:build !ios && !android && (amd64 || arm64)
 
 package avebi
 
@@ -20,7 +20,7 @@ var (
 	ErrTooManyChannels = errors.New("file audio streams with more than 2 channels are not supported")
 )
 
-// Player is a video player backed by ffgo when built with the avebi_ffgo tag.
+// Player is a video player backed by ffgo.
 type Player struct {
 	controller        playbackController
 	currentFrame      *ebiten.Image
