@@ -19,6 +19,26 @@ type fakeMediaDecoder struct {
 	closed    bool
 }
 
+type fakeFFGOAudioPlayer struct {
+	playing  bool
+	closed   bool
+	position time.Duration
+	volume   float64
+	buffer   time.Duration
+}
+
+func (p *fakeFFGOAudioPlayer) Play()                         { p.playing = true }
+func (p *fakeFFGOAudioPlayer) Pause()                        { p.playing = false }
+func (p *fakeFFGOAudioPlayer) IsPlaying() bool               { return p.playing }
+func (p *fakeFFGOAudioPlayer) Position() time.Duration       { return p.position }
+func (p *fakeFFGOAudioPlayer) SetBufferSize(v time.Duration) { p.buffer = v }
+func (p *fakeFFGOAudioPlayer) SetVolume(v float64)           { p.volume = v }
+func (p *fakeFFGOAudioPlayer) Close() error {
+	p.closed = true
+	p.playing = false
+	return nil
+}
+
 func (d *fakeMediaDecoder) Info() backendMediaInfo { return d.info }
 
 func (d *fakeMediaDecoder) ReadFrame(context.Context) (backendFrame, error) {
@@ -140,6 +160,95 @@ func TestFFGOSeekToEndAndManualStopHaveDifferentEndState(t *testing.T) {
 	}
 	if controller.HasEnded() {
 		t.Fatal("manual Stop was reported as a natural end")
+	}
+}
+
+func TestFFGOAudioEOFWaitsForPlaybackAndCanReplay(t *testing.T) {
+	const duration = 3 * time.Second
+	decoder := &fakeMediaDecoder{info: backendMediaInfo{
+		Duration: duration,
+		Video:    &backendVideoInfo{Width: 2, Height: 2, FrameRateNum: 25, FrameRateDen: 1},
+		Audio:    &backendAudioInfo{SampleRate: 48_000, Channels: 2},
+	}}
+	oldPlayer := &fakeFFGOAudioPlayer{playing: true, position: 500 * time.Millisecond}
+	newPlayer := &fakeFFGOAudioPlayer{}
+	controller := newFFGOLocalController(decoder)
+	controller.state = Playing
+	controller.audioPlayer = oldPlayer
+	controller.waitingForAudioPTS = false
+	controller.newAudioPlayer = func(io.Reader) (ffgoAudioPlayer, error) {
+		return newPlayer, nil
+	}
+
+	if err := controller.noLockHandleAudioEOF(); !errors.Is(err, io.EOF) {
+		t.Fatalf("audio EOF error = %v, want io.EOF", err)
+	}
+	position, err := controller.noLockPosition(time.Now())
+	if err != nil {
+		t.Fatalf("position while draining: %v", err)
+	}
+	if position != oldPlayer.position || controller.ended || controller.state != Playing {
+		t.Fatalf("state while draining = position %s, ended %v, state %v", position, controller.ended, controller.state)
+	}
+
+	oldPlayer.position = duration
+	oldPlayer.playing = false
+	position, err = controller.noLockPosition(time.Now())
+	if err != nil {
+		t.Fatalf("position after drain: %v", err)
+	}
+	if position != duration || !controller.ended || controller.state != Stopped {
+		t.Fatalf("state after drain = position %s, ended %v, state %v", position, controller.ended, controller.state)
+	}
+
+	if err := controller.Play(); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if !oldPlayer.closed {
+		t.Fatal("replay did not close the exhausted audio player")
+	}
+	if controller.audioPlayer != newPlayer || !newPlayer.playing {
+		t.Fatal("replay did not start a fresh audio player")
+	}
+	if controller.ended || controller.audioEOF || controller.state != Playing {
+		t.Fatalf("replay state = ended %v, audioEOF %v, state %v", controller.ended, controller.audioEOF, controller.state)
+	}
+	if len(decoder.seekCalls) != 1 || decoder.seekCalls[0] != 0 {
+		t.Fatalf("replay seeks = %v, want [0s]", decoder.seekCalls)
+	}
+}
+
+func TestFFGOAudioLoopRestartsAfterPlaybackDrain(t *testing.T) {
+	const duration = 3 * time.Second
+	decoder := &fakeMediaDecoder{info: backendMediaInfo{
+		Duration: duration,
+		Video:    &backendVideoInfo{Width: 2, Height: 2, FrameRateNum: 25, FrameRateDen: 1},
+		Audio:    &backendAudioInfo{SampleRate: 48_000, Channels: 2},
+	}}
+	oldPlayer := &fakeFFGOAudioPlayer{position: duration}
+	newPlayer := &fakeFFGOAudioPlayer{}
+	controller := newFFGOLocalController(decoder)
+	controller.state = Playing
+	controller.looping = true
+	controller.audioEOF = true
+	controller.audioPlayer = oldPlayer
+	controller.waitingForAudioPTS = false
+	controller.newAudioPlayer = func(io.Reader) (ffgoAudioPlayer, error) {
+		return newPlayer, nil
+	}
+
+	position, err := controller.noLockPosition(time.Now())
+	if err != nil {
+		t.Fatalf("loop position: %v", err)
+	}
+	if position != 0 || controller.state != Playing || controller.ended {
+		t.Fatalf("loop state = position %s, state %v, ended %v", position, controller.state, controller.ended)
+	}
+	if !oldPlayer.closed || controller.audioPlayer != newPlayer || !newPlayer.playing {
+		t.Fatal("audio loop did not replace and start the exhausted player")
+	}
+	if len(decoder.seekCalls) != 1 || decoder.seekCalls[0] != 0 {
+		t.Fatalf("audio loop seeks = %v, want [0s]", decoder.seekCalls)
 	}
 }
 

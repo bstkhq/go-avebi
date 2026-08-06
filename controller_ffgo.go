@@ -15,6 +15,18 @@ import (
 
 const ffgoPlayerBufferSize = 200 * time.Millisecond
 
+type ffgoAudioPlayer interface {
+	Play()
+	Pause()
+	IsPlaying() bool
+	Position() time.Duration
+	SetBufferSize(time.Duration)
+	SetVolume(float64)
+	Close() error
+}
+
+type ffgoAudioPlayerFactory func(io.Reader) (ffgoAudioPlayer, error)
+
 type playbackController interface {
 	State() (PlaybackState, error)
 	Play() error
@@ -57,7 +69,9 @@ type ffgoLocalController struct {
 	audioQueue []byte
 
 	hasAudio           bool
-	audioPlayer        *audio.Player
+	audioPlayer        ffgoAudioPlayer
+	newAudioPlayer     ffgoAudioPlayerFactory
+	audioEOF           bool
 	firstAudioPTS      time.Duration
 	waitingForAudioPTS bool
 	volume             float64
@@ -73,6 +87,7 @@ func newFFGOLocalController(decoder mediaDecoder) *ffgoLocalController {
 		info:               info,
 		state:              Stopped,
 		hasAudio:           info.Audio != nil,
+		newAudioPlayer:     newEbitengineAudioPlayer,
 		waitingForAudioPTS: info.Audio != nil,
 		volume:             1,
 		videoQueue:         make([]backendFrame, 0, 8),
@@ -99,6 +114,9 @@ func (c *ffgoLocalController) Play() error {
 		return nil
 	}
 	if c.ended {
+		if err := c.noLockCloseAudioPlayer(); err != nil {
+			return err
+		}
 		if err := c.decoder.Seek(0); err != nil {
 			return err
 		}
@@ -284,13 +302,32 @@ func (c *ffgoLocalController) noLockPosition(now time.Time) (time.Duration, erro
 		}
 		position = c.referencePosition + now.Sub(c.referenceTime)
 	}
+	if c.hasAudio && c.audioEOF && c.state == Playing && c.audioPlayer != nil && !c.audioPlayer.IsPlaying() && c.info.Duration > 0 {
+		position = c.info.Duration
+	}
 
 	if c.info.Duration <= 0 || position < c.info.Duration {
 		return max(position, 0), nil
 	}
 	if c.looping {
 		if c.hasAudio {
-			return position % c.info.Duration, nil
+			if !c.audioEOF {
+				return c.info.Duration, nil
+			}
+			if err := c.noLockCloseAudioPlayer(); err != nil {
+				return 0, err
+			}
+			if err := c.decoder.Seek(0); err != nil {
+				return 0, err
+			}
+			c.noLockResetPlayback(0)
+			c.state = Playing
+			if err := c.noLockCreateAudioPlayer(); err != nil {
+				c.state = Stopped
+				return 0, err
+			}
+			c.audioPlayer.Play()
+			return 0, nil
 		}
 		position %= c.info.Duration
 		if err := c.decoder.Seek(position); err != nil {
@@ -474,7 +511,6 @@ func (c *ffgoLocalController) Read(buffer []byte) (int, error) {
 			if c.decodeErr == nil {
 				c.decodeErr = err
 			}
-			c.audioPlayer = nil
 			c.state = Stopped
 			return served, io.EOF
 		}
@@ -510,40 +546,18 @@ func (c *ffgoLocalController) noLockCopyAudio(buffer []byte) int {
 }
 
 func (c *ffgoLocalController) noLockHandleAudioEOF() error {
-	c.audioPlayer = nil
-	if c.looping {
-		if err := c.decoder.Seek(0); err != nil {
-			if c.decodeErr == nil {
-				c.decodeErr = err
-			}
-			c.state = Stopped
-			return io.EOF
-		}
-		c.noLockResetPlayback(0)
-		c.state = Playing
-		if err := c.noLockCreateAudioPlayer(); err != nil {
-			if c.decodeErr == nil {
-				c.decodeErr = err
-			}
-			c.state = Stopped
-			return io.EOF
-		}
-		c.audioPlayer.Play()
-		return io.EOF
-	}
-	c.ended = true
-	c.state = Stopped
-	c.staticPosition = c.info.Duration
-	c.referencePosition = c.info.Duration
+	// The decoder can reach EOF while Oto still has buffered PCM to play. The
+	// playback clock, not this read-ahead boundary, decides when media ended.
+	c.audioEOF = true
 	return io.EOF
 }
 
 func (c *ffgoLocalController) noLockCreateAudioPlayer() error {
-	ctx := audio.CurrentContext()
-	if ctx == nil {
-		return ErrNilAudioContext
+	factory := c.newAudioPlayer
+	if factory == nil {
+		factory = newEbitengineAudioPlayer
 	}
-	player, err := ctx.NewPlayer(&struct{ io.Reader }{c})
+	player, err := factory(&struct{ io.Reader }{c})
 	if err != nil {
 		return err
 	}
@@ -554,6 +568,14 @@ func (c *ffgoLocalController) noLockCreateAudioPlayer() error {
 	return nil
 }
 
+func newEbitengineAudioPlayer(source io.Reader) (ffgoAudioPlayer, error) {
+	ctx := audio.CurrentContext()
+	if ctx == nil {
+		return nil, ErrNilAudioContext
+	}
+	return ctx.NewPlayer(source)
+}
+
 func (c *ffgoLocalController) noLockCloseAudioPlayer() error {
 	if c.audioPlayer == nil {
 		return nil
@@ -561,6 +583,7 @@ func (c *ffgoLocalController) noLockCloseAudioPlayer() error {
 	c.audioPlayer.Pause()
 	err := c.audioPlayer.Close()
 	c.audioPlayer = nil
+	c.audioEOF = false
 	return err
 }
 
@@ -569,6 +592,7 @@ func (c *ffgoLocalController) noLockResetPlayback(position time.Duration) {
 	c.videoQueue = c.videoQueue[:0]
 	c.audioQueue = c.audioQueue[:0]
 	c.firstAudioPTS = position
+	c.audioEOF = false
 	c.waitingForAudioPTS = c.hasAudio
 	c.staticPosition = position
 	c.referencePosition = position
