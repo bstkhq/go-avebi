@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"os"
 
+	ebitenmcp "github.com/bstkhq/go-ebiten-mcp"
 	"github.com/erparts/go-avebi"
 	"github.com/hajimehoshi/ebiten/v2"
 )
@@ -33,14 +34,46 @@ func main() {
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 
 	g := &game{p: player}
-	if err := ebiten.RunGame(g); err != nil {
+	if err := ebitenmcp.RunGame(
+		g,
+		ebitenmcp.WithName("avebi-stream"),
+		ebitenmcp.WithCaptureStage(ebitenmcp.StageOffscreen),
+		ebitenmcp.WithState("player", func(current ebiten.Game) any {
+			return current.(*game).snapshot()
+		}),
+	); err != nil {
 		panic(err)
 	}
 }
 
 type game struct {
-	p     *avebi.Player
-	frame *ebiten.Image
+	p       *avebi.Player
+	frame   *ebiten.Image
+	lastErr error
+}
+
+type streamSnapshot struct {
+	State      string `json:"state"`
+	PositionMS int64  `json:"position_ms"`
+	FramePTS   int64  `json:"frame_pts_ms"`
+	Error      string `json:"error,omitempty"`
+}
+
+func (g *game) snapshot() streamSnapshot {
+	state, stateErr := g.p.State()
+	position, positionErr := g.p.Position()
+	result := streamSnapshot{
+		State:      state.String(),
+		PositionMS: position.Milliseconds(),
+		FramePTS:   g.p.LastPresentationOffset().Milliseconds(),
+	}
+	for _, err := range []error{g.lastErr, stateErr, positionErr, g.p.Error()} {
+		if err != nil {
+			result.Error = err.Error()
+			break
+		}
+	}
+	return result
 }
 
 func (g *game) Update() error {
@@ -50,6 +83,7 @@ func (g *game) Update() error {
 
 	f, err := g.p.CurrentFrame()
 	if err != nil {
+		g.lastErr = err
 		fmt.Printf("error getting current frame: %v\n", err)
 		return nil
 	}

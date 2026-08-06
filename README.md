@@ -38,6 +38,31 @@ go build -tags avebi_ffgo ./...
 
 The ffgo build does not compile or link Reisen, and discovers the FFmpeg shared libraries at runtime. The current validation baseline is Linux `amd64` with FFmpeg 6.1. The audio path still depends on a small set of ffgo fixes being submitted upstream, so this backend is not release-ready until those fixes are pinned here. Explicit ABI detection and support for FFmpeg 7 and 8 are planned separately.
 
+## Instrumented examples
+
+Both examples use
+[go-ebiten-mcp](https://github.com/bstkhq/go-ebiten-mcp). This intentionally
+makes Go 1.25 and Ebitengine 2.9.9 project requirements. With
+`EBITEN_MCP_ADDR` unset the examples behave like ordinary Ebitengine
+applications.
+
+Run the local media player with the ffgo backend:
+
+```sh
+go run -tags avebi_ffgo ./examples/mediaplayer /path/to/video.mp4
+```
+
+Expose it to go-ebiten-mcp on loopback:
+
+```sh
+EBITEN_MCP_ADDR=127.0.0.1:8384 \
+  go run -tags avebi_ffgo ./examples/mediaplayer /path/to/video.mp4
+```
+
+The media player publishes `@player` with playback state, position, frame PTS,
+end/loop/audio flags and errors. The stream example publishes its state,
+position, frame PTS and last error through the same `@player` name.
+
 ## Usage
 
 ```Golang
