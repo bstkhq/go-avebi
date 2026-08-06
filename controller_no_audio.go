@@ -1,3 +1,5 @@
+//go:build !avebi_ffgo
+
 package avebi
 
 import (

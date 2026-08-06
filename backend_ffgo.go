@@ -1,0 +1,383 @@
+//go:build avebi_ffgo && !ios && !android && (amd64 || arm64)
+
+package avebi
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/obinnaokechukwu/ffgo"
+	"github.com/obinnaokechukwu/ffgo/avutil"
+)
+
+type ffgoBackend struct{}
+
+var _ mediaBackend = ffgoBackend{}
+var _ mediaDecoder = (*ffgoDecoder)(nil)
+
+func newMediaBackend() mediaBackend { return ffgoBackend{} }
+
+func (ffgoBackend) Probe(ctx context.Context, source string, opts backendOpenOptions) (backendMediaInfo, error) {
+	decoder, err := openFFGODecoder(ctx, source, opts)
+	if err != nil {
+		return backendMediaInfo{}, err
+	}
+	info := decoder.Info()
+	return info, decoder.Close()
+}
+
+func (ffgoBackend) Open(ctx context.Context, source string, opts backendOpenOptions) (mediaDecoder, error) {
+	return openFFGODecoder(ctx, source, opts)
+}
+
+type ffgoDecoder struct {
+	mutex sync.Mutex
+
+	decoder *ffgo.Decoder
+	info    backendMediaInfo
+
+	outputSampleRate  int
+	scaler            *ffgo.Scaler
+	scalerWidth       int
+	scalerHeight      int
+	scalerFormat      ffgo.PixelFormat
+	resampler         *ffgo.Resampler
+	resamplerRate     int
+	resamplerChannels int
+	resamplerFormat   ffgo.SampleFormat
+
+	seeking        bool
+	seekTarget     time.Duration
+	seekVideoReady bool
+	seekAudioReady bool
+	closed         bool
+}
+
+func openFFGODecoder(ctx context.Context, source string, opts backendOpenOptions) (*ffgoDecoder, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ffgo.Init(); err != nil {
+		return nil, fmt.Errorf("initialize ffgo: %w", err)
+	}
+	// ffgo does not currently load its optional ABI shim from Init. Triggering
+	// the lookup here ensures field accessors use it when it is available.
+	_ = ffgo.ShimStatus()
+
+	decoderOpts := &ffgo.DecoderOptions{}
+	if opts.DisableAudio {
+		decoderOpts.Streams = []ffgo.MediaType{ffgo.MediaTypeVideo}
+	}
+	if opts.Live {
+		decoderOpts.AVOptions = make(map[string]string)
+		if opts.ConnTimeout > 0 {
+			value := strconv.FormatInt(opts.ConnTimeout.Microseconds(), 10)
+			decoderOpts.AVOptions["timeout"] = value
+			decoderOpts.AVOptions["stimeout"] = value
+		}
+		if opts.ReadTimeout > 0 {
+			decoderOpts.AVOptions["rw_timeout"] = strconv.FormatInt(opts.ReadTimeout.Microseconds(), 10)
+		}
+	}
+
+	decoder, err := ffgo.NewDecoderWithOptions(source, decoderOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	info := mediaInfoFromFFGO(decoder)
+	if info.Video == nil || info.Video.Width <= 0 || info.Video.Height <= 0 {
+		_ = decoder.Close()
+		return nil, ErrNoVideo
+	}
+
+	outputSampleRate := opts.OutputSampleRate
+	if outputSampleRate <= 0 && info.Audio != nil {
+		outputSampleRate = info.Audio.SampleRate
+	}
+
+	return &ffgoDecoder{
+		decoder:          decoder,
+		info:             info,
+		outputSampleRate: outputSampleRate,
+	}, nil
+}
+
+func mediaInfoFromFFGO(decoder *ffgo.Decoder) backendMediaInfo {
+	info := backendMediaInfo{Duration: decoder.Duration()}
+	if stream := decoder.VideoStream(); stream != nil {
+		info.Video = &backendVideoInfo{
+			Width:        stream.Width,
+			Height:       stream.Height,
+			FrameRateNum: int(stream.FrameRate.Num),
+			FrameRateDen: int(stream.FrameRate.Den),
+		}
+	}
+	if stream := decoder.AudioStream(); stream != nil {
+		info.Audio = &backendAudioInfo{
+			SampleRate: stream.SampleRate,
+			Channels:   stream.Channels,
+		}
+	}
+	return info
+}
+
+func (d *ffgoDecoder) Info() backendMediaInfo { return d.info }
+
+func (d *ffgoDecoder) ReadFrame(ctx context.Context) (backendFrame, error) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
+	if d.closed {
+		return backendFrame{}, errors.New("avebi: ffgo decoder is closed")
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return backendFrame{}, err
+		}
+
+		frame, err := d.decoder.ReadFrame()
+		if err != nil {
+			return backendFrame{}, err
+		}
+		if frame == nil {
+			return backendFrame{}, io.EOF
+		}
+
+		converted, ok, err := d.convertFrame(frame)
+		if err != nil {
+			return backendFrame{}, err
+		}
+		if !ok || !d.acceptSeekFrame(converted) {
+			continue
+		}
+		return converted, nil
+	}
+}
+
+func (d *ffgoDecoder) convertFrame(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
+	switch frame.MediaType() {
+	case ffgo.MediaTypeVideo:
+		return d.convertVideoFrame(frame)
+	case ffgo.MediaTypeAudio:
+		return d.convertAudioFrame(frame)
+	default:
+		return backendFrame{}, false, nil
+	}
+}
+
+func (d *ffgoDecoder) convertVideoFrame(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
+	width, height := frame.Width(), frame.Height()
+	if width <= 0 || height <= 0 {
+		width, height = d.info.Video.Width, d.info.Video.Height
+	}
+	sourceFormat := frame.PixelFormat()
+	if d.scaler == nil || d.scalerWidth != width || d.scalerHeight != height || d.scalerFormat != sourceFormat {
+		if d.scaler != nil {
+			_ = d.scaler.Close()
+		}
+		scaler, err := ffgo.NewScaler(width, height, sourceFormat, width, height, ffgo.PixelFormatRGBA, ffgo.ScaleBilinear)
+		if err != nil {
+			return backendFrame{}, false, err
+		}
+		d.scaler = scaler
+		d.scalerWidth = width
+		d.scalerHeight = height
+		d.scalerFormat = sourceFormat
+	}
+
+	scaled, err := d.scaler.Scale(frame.Raw())
+	if err != nil {
+		return backendFrame{}, false, err
+	}
+	wrapped := ffgo.WrapFrame(scaled, ffgo.MediaTypeVideo)
+	stride := wrapped.Linesize(0)
+	rowSize := width * 4
+	if stride < rowSize {
+		return backendFrame{}, false, fmt.Errorf("avebi: ffgo returned RGBA stride %d for row size %d", stride, rowSize)
+	}
+	data := wrapped.Data(0)
+	if len(data) < stride*height {
+		return backendFrame{}, false, fmt.Errorf("avebi: ffgo returned a truncated RGBA frame")
+	}
+
+	rgba := make([]byte, rowSize*height)
+	for row := 0; row < height; row++ {
+		copy(rgba[row*rowSize:(row+1)*rowSize], data[row*stride:row*stride+rowSize])
+	}
+
+	pts := ffgoPTS(frame.PTS(), d.decoder.VideoStream().TimeBase)
+	duration := d.info.Video.FrameDuration()
+	return backendFrame{
+		Kind:     backendFrameVideo,
+		PTS:      pts,
+		Duration: duration,
+		Video: backendVideoFrame{
+			RGBA:   rgba,
+			Width:  width,
+			Height: height,
+			Stride: rowSize,
+		},
+	}, true, nil
+}
+
+func (d *ffgoDecoder) convertAudioFrame(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
+	if d.info.Audio == nil || d.outputSampleRate <= 0 {
+		return backendFrame{}, false, nil
+	}
+
+	sampleRate := frame.SampleRate()
+	if sampleRate <= 0 {
+		sampleRate = d.info.Audio.SampleRate
+	}
+	channels := d.info.Audio.Channels
+	if sampleRate <= 0 || channels <= 0 {
+		return backendFrame{}, false, fmt.Errorf("avebi: invalid ffgo audio format %d Hz/%d channels", sampleRate, channels)
+	}
+	sampleFormat := frame.SampleFormat()
+	if d.resampler == nil || d.resamplerRate != sampleRate || d.resamplerChannels != channels || d.resamplerFormat != sampleFormat {
+		if d.resampler != nil {
+			_ = d.resampler.Close()
+		}
+		resampler, err := ffgo.NewResampler(
+			ffgo.AudioFormat{SampleRate: sampleRate, Channels: channels, SampleFormat: sampleFormat},
+			ffgo.AudioFormat{SampleRate: d.outputSampleRate, Channels: 2, ChannelLayout: ffgo.ChannelLayoutStereo, SampleFormat: ffgo.SampleFormatS16},
+		)
+		if err != nil {
+			return backendFrame{}, false, err
+		}
+		d.resampler = resampler
+		d.resamplerRate = sampleRate
+		d.resamplerChannels = channels
+		d.resamplerFormat = sampleFormat
+	}
+
+	resampled, err := d.resampler.Resample(frame.Raw())
+	if err != nil {
+		return backendFrame{}, false, err
+	}
+	if resampled.IsNil() {
+		return backendFrame{}, false, nil
+	}
+	defer resampled.Free()
+
+	wrapped := ffgo.WrapFrame(resampled, ffgo.MediaTypeAudio)
+	samples := wrapped.NumSamples()
+	if samples <= 0 {
+		return backendFrame{}, false, nil
+	}
+	expectedBytes := samples * 2 * 2
+	data := wrapped.Data(0)
+	if len(data) < expectedBytes {
+		return backendFrame{}, false, fmt.Errorf("avebi: ffgo returned %d audio bytes, expected at least %d", len(data), expectedBytes)
+	}
+	pcm := append([]byte(nil), data[:expectedBytes]...)
+
+	pts := ffgoPTS(frame.PTS(), d.decoder.AudioStream().TimeBase)
+	duration := time.Second * time.Duration(samples) / time.Duration(d.outputSampleRate)
+	return backendFrame{
+		Kind:     backendFrameAudio,
+		PTS:      pts,
+		Duration: duration,
+		Audio: backendAudioFrame{
+			PCM:        pcm,
+			SampleRate: d.outputSampleRate,
+			Channels:   2,
+		},
+	}, true, nil
+}
+
+func ffgoPTS(pts int64, timeBase ffgo.Rational) time.Duration {
+	if pts == avutil.NoPTSValue || timeBase.Num <= 0 || timeBase.Den <= 0 {
+		return 0
+	}
+	seconds := float64(pts) * float64(timeBase.Num) / float64(timeBase.Den)
+	return time.Duration(seconds * float64(time.Second))
+}
+
+func (d *ffgoDecoder) acceptSeekFrame(frame backendFrame) bool {
+	if !d.seeking {
+		return true
+	}
+
+	ready := false
+	switch frame.Kind {
+	case backendFrameVideo:
+		if d.seekVideoReady {
+			return true
+		}
+		ready = frame.PTS+frame.Duration >= d.seekTarget
+		if ready {
+			d.seekVideoReady = true
+		}
+	case backendFrameAudio:
+		if d.seekAudioReady {
+			return true
+		}
+		ready = frame.PTS+frame.Duration >= d.seekTarget
+		if ready {
+			d.seekAudioReady = true
+		}
+	}
+
+	if d.seekVideoReady && d.seekAudioReady {
+		d.seeking = false
+	}
+	return ready
+}
+
+func (d *ffgoDecoder) Seek(position time.Duration) error {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
+	if d.closed {
+		return errors.New("avebi: ffgo decoder is closed")
+	}
+	position = max(position, 0)
+	if d.info.Duration > 0 {
+		position = min(position, d.info.Duration)
+	}
+	if err := d.decoder.Seek(position); err != nil {
+		return err
+	}
+	if d.resampler != nil {
+		_ = d.resampler.Close()
+		d.resampler = nil
+	}
+	d.seeking = true
+	d.seekTarget = position
+	d.seekVideoReady = d.info.Video == nil
+	d.seekAudioReady = d.info.Audio == nil
+	return nil
+}
+
+func (d *ffgoDecoder) Close() error {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
+	if d.closed {
+		return nil
+	}
+	d.closed = true
+
+	var errs []error
+	if d.resampler != nil {
+		errs = append(errs, d.resampler.Close())
+		d.resampler = nil
+	}
+	if d.scaler != nil {
+		errs = append(errs, d.scaler.Close())
+		d.scaler = nil
+	}
+	if d.decoder != nil {
+		errs = append(errs, d.decoder.Close())
+		d.decoder = nil
+	}
+	return errors.Join(errs...)
+}

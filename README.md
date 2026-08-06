@@ -1,13 +1,18 @@
 # avebi
 
-A video playing library for Ebitengine based on the [erparts/reisen](https://github.com/erparts/reisen) fork of [zergon321/reisen](https://github.com/zergon321/reisen), with an API design inspired by [tinne26/mpegg](https://github.com/tinne26/mpegg).
+A video playing library for Ebitengine, with an API design inspired by [tinne26/mpegg](https://github.com/tinne26/mpegg).
+
+Two compile-time media backends are available:
+
+- `reisen` is the default and preserves the existing behavior.
+- `ffgo` is an experimental purego FFmpeg binding selected with the `avebi_ffgo` build tag.
 
 Warnings and limitations:
 - The library is still quite barebones, lacking testing and only trying to cover primary needs for erparts.
-- Reisen uses cgo, so this library inherits the problem (consider purego).
-- The dependency on ffmpeg6.1 is quite undesirable for casual projects.
+- The default Reisen backend uses cgo and FFmpeg 6.1.
 - The `erparts/reisen` fork is only adapted for Linux, so multi-platform support is non-existent.
-- In order to play video with audio, the audio channels need to be stereo and the same length as the video channels.
+- The ffgo backend is currently limited to desktop `amd64` and `arm64`; iOS and Android are excluded.
+- ffgo itself uses purego, but Ebitengine can still require cgo for its graphics or audio platform drivers.
 
 ## Dependencies
 
@@ -16,6 +21,22 @@ Reisen depends on ffmpeg6.1, which is currently an outdated ffmpeg version.
 On a linux system, the choices are:
 - **Keeping only the old ffmpeg version**: which is not viable on up-to-date personal use computers where you have other programs that depend on the newest ffmpeg version.
 - **Keeping ffmpeg6.1 alongside newer versions**: and using `PKG_CONFIG_PATH=/usr/lib/ffmpeg6.1/pkgconfig` or similar to point to it.
+
+## Backends
+
+The default build continues to use Reisen:
+
+```sh
+go build ./...
+```
+
+Build with ffgo explicitly while the backend is experimental:
+
+```sh
+go build -tags avebi_ffgo ./...
+```
+
+The ffgo build does not compile or link Reisen, and discovers the FFmpeg shared libraries at runtime. The current validation baseline is Linux `amd64` with FFmpeg 6.1. The audio path still depends on a small set of ffgo fixes being submitted upstream, so this backend is not release-ready until those fixes are pinned here. Explicit ABI detection and support for FFmpeg 7 and 8 are planned separately.
 
 ## Usage
 
