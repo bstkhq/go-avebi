@@ -219,7 +219,7 @@ func (c *ffgoLocalController) Seek(position time.Duration) (*backendFrame, error
 		return nil, nil
 	}
 
-	frame, err := c.noLockPrimeAt(position)
+	frame, err := c.noLockPrimeAfterSeek()
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +251,10 @@ func (c *ffgoLocalController) Seek(position time.Duration) (*backendFrame, error
 	return frame, nil
 }
 
-func (c *ffgoLocalController) noLockPrimeAt(position time.Duration) (*backendFrame, error) {
+// noLockPrimeAfterSeek buffers accepted audio until the first accepted video
+// frame. The decoder's Seek contract has already filtered both streams to the
+// requested target.
+func (c *ffgoLocalController) noLockPrimeAfterSeek() (*backendFrame, error) {
 	for {
 		frame, err := c.decoder.ReadFrame(context.Background())
 		if err != nil {
@@ -506,7 +509,11 @@ func (c *ffgoLocalController) Read(buffer []byte) (int, error) {
 		frame, err := c.decoder.ReadFrame(context.Background())
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return served, c.noLockHandleAudioEOF()
+				// The decoder can reach EOF while Oto still has buffered PCM to
+				// play. The playback clock, not this read-ahead boundary, decides
+				// when media ended.
+				c.audioEOF = true
+				return served, io.EOF
 			}
 			if c.decodeErr == nil {
 				c.decodeErr = err
@@ -543,13 +550,6 @@ func (c *ffgoLocalController) noLockCopyAudio(buffer []byte) int {
 		c.audioQueue = c.audioQueue[:remaining]
 	}
 	return copied
-}
-
-func (c *ffgoLocalController) noLockHandleAudioEOF() error {
-	// The decoder can reach EOF while Oto still has buffered PCM to play. The
-	// playback clock, not this read-ahead boundary, decides when media ended.
-	c.audioEOF = true
-	return io.EOF
 }
 
 func (c *ffgoLocalController) noLockCreateAudioPlayer() error {

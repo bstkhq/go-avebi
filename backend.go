@@ -17,6 +17,8 @@ type mediaBackend interface {
 type mediaDecoder interface {
 	Info() backendMediaInfo
 	ReadFrame(context.Context) (backendFrame, error)
+	// Seek positions the decoder and makes subsequent ReadFrame calls discard
+	// frames until every enabled stream reaches or covers the target.
 	Seek(time.Duration) error
 	Close() error
 }

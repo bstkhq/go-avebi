@@ -65,9 +65,6 @@ func openFFGODecoder(ctx context.Context, source string, opts backendOpenOptions
 	if err := ffgo.Init(); err != nil {
 		return nil, fmt.Errorf("initialize ffgo: %w", err)
 	}
-	// ffgo does not currently load its optional ABI shim from Init. Triggering
-	// the lookup here ensures field accessors use it when it is available.
-	_ = ffgo.ShimStatus()
 
 	decoderOpts := &ffgo.DecoderOptions{}
 	if opts.DisableAudio {
@@ -150,29 +147,30 @@ func (d *ffgoDecoder) ReadFrame(ctx context.Context) (backendFrame, error) {
 			return backendFrame{}, io.EOF
 		}
 
-		converted, ok, err := d.convertFrame(frame)
+		converted, ok, err := d.convertFrameLocked(frame)
 		if err != nil {
 			return backendFrame{}, err
 		}
-		if !ok || !d.acceptSeekFrame(converted) {
+		if !ok || !d.acceptSeekFrameLocked(converted) {
 			continue
 		}
 		return converted, nil
 	}
 }
 
-func (d *ffgoDecoder) convertFrame(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
+// The *Locked helpers below require d.mutex to be held by the caller.
+func (d *ffgoDecoder) convertFrameLocked(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
 	switch frame.MediaType() {
 	case ffgo.MediaTypeVideo:
-		return d.convertVideoFrame(frame)
+		return d.convertVideoFrameLocked(frame)
 	case ffgo.MediaTypeAudio:
-		return d.convertAudioFrame(frame)
+		return d.convertAudioFrameLocked(frame)
 	default:
 		return backendFrame{}, false, nil
 	}
 }
 
-func (d *ffgoDecoder) convertVideoFrame(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
+func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
 	width, height := frame.Width(), frame.Height()
 	if width <= 0 || height <= 0 {
 		width, height = d.info.Video.Width, d.info.Video.Height
@@ -182,6 +180,10 @@ func (d *ffgoDecoder) convertVideoFrame(frame *ffgo.FrameWrapper) (backendFrame,
 		if d.scaler != nil {
 			_ = d.scaler.Close()
 		}
+		// Source and destination dimensions intentionally match: swscale is used
+		// for pixel-format and YUV-to-RGB conversion, not geometric resizing.
+		// Bilinear filtering still gives sensible chroma upsampling for subsampled
+		// YUV inputs such as YUV420P.
 		scaler, err := ffgo.NewScaler(width, height, sourceFormat, width, height, ffgo.PixelFormatRGBA, ffgo.ScaleBilinear)
 		if err != nil {
 			return backendFrame{}, false, err
@@ -196,6 +198,9 @@ func (d *ffgoDecoder) convertVideoFrame(frame *ffgo.FrameWrapper) (backendFrame,
 	if err != nil {
 		return backendFrame{}, false, err
 	}
+	// Scale returns a raw frame. WrapFrame exposes its data pointer and stride;
+	// the row copy below removes any FFmpeg padding and produces tightly packed
+	// RGBA bytes for ebiten.Image.WritePixels.
 	wrapped := ffgo.WrapFrame(scaled, ffgo.MediaTypeVideo)
 	stride := wrapped.Linesize(0)
 	rowSize := width * 4
@@ -227,7 +232,7 @@ func (d *ffgoDecoder) convertVideoFrame(frame *ffgo.FrameWrapper) (backendFrame,
 	}, true, nil
 }
 
-func (d *ffgoDecoder) convertAudioFrame(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
+func (d *ffgoDecoder) convertAudioFrameLocked(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
 	if d.info.Audio == nil || d.outputSampleRate <= 0 {
 		return backendFrame{}, false, nil
 	}
@@ -245,6 +250,10 @@ func (d *ffgoDecoder) convertAudioFrame(frame *ffgo.FrameWrapper) (backendFrame,
 		if d.resampler != nil {
 			_ = d.resampler.Close()
 		}
+		// Ebitengine has one process-wide output sample rate. It can differ from
+		// this media (notably after another player created the audio context), and
+		// decoded FFmpeg audio is commonly planar or non-S16. Normalize every
+		// source to packed stereo S16 at the active context's sample rate.
 		resampler, err := ffgo.NewResampler(
 			ffgo.AudioFormat{SampleRate: sampleRate, Channels: channels, SampleFormat: sampleFormat},
 			ffgo.AudioFormat{SampleRate: d.outputSampleRate, Channels: 2, ChannelLayout: ffgo.ChannelLayoutStereo, SampleFormat: ffgo.SampleFormatS16},
@@ -301,7 +310,7 @@ func ffgoPTS(pts int64, timeBase ffgo.Rational) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
-func (d *ffgoDecoder) acceptSeekFrame(frame backendFrame) bool {
+func (d *ffgoDecoder) acceptSeekFrameLocked(frame backendFrame) bool {
 	if !d.seeking {
 		return true
 	}
@@ -347,6 +356,8 @@ func (d *ffgoDecoder) Seek(position time.Duration) error {
 		return err
 	}
 	if d.resampler != nil {
+		// Flush would emit delayed samples from before the seek. Close instead so
+		// the next audio frame creates a context with no pre-seek history.
 		_ = d.resampler.Close()
 		d.resampler = nil
 	}

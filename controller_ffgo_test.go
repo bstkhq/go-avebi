@@ -180,8 +180,8 @@ func TestFFGOAudioEOFWaitsForPlaybackAndCanReplay(t *testing.T) {
 		return newPlayer, nil
 	}
 
-	if err := controller.noLockHandleAudioEOF(); !errors.Is(err, io.EOF) {
-		t.Fatalf("audio EOF error = %v, want io.EOF", err)
+	if n, err := controller.Read(make([]byte, 4)); n != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("audio EOF read = %d, %v; want 0, io.EOF", n, err)
 	}
 	position, err := controller.noLockPosition(time.Now())
 	if err != nil {
@@ -261,17 +261,19 @@ func TestFFGOSeekFilterWaitsForAudioAndVideo(t *testing.T) {
 		seeking:    true,
 		seekTarget: 5 * time.Second,
 	}
+	decoder.mutex.Lock()
+	defer decoder.mutex.Unlock()
 
-	if decoder.acceptSeekFrame(backendFrame{Kind: backendFrameAudio, PTS: 4 * time.Second, Duration: 20 * time.Millisecond}) {
+	if decoder.acceptSeekFrameLocked(backendFrame{Kind: backendFrameAudio, PTS: 4 * time.Second, Duration: 20 * time.Millisecond}) {
 		t.Fatal("accepted an audio frame entirely before the seek target")
 	}
-	if !decoder.acceptSeekFrame(backendFrame{Kind: backendFrameVideo, PTS: 4980 * time.Millisecond, Duration: 40 * time.Millisecond}) {
+	if !decoder.acceptSeekFrameLocked(backendFrame{Kind: backendFrameVideo, PTS: 4980 * time.Millisecond, Duration: 40 * time.Millisecond}) {
 		t.Fatal("rejected the video frame covering the seek target")
 	}
 	if !decoder.seeking {
 		t.Fatal("seek filtering stopped before audio reached the target")
 	}
-	if !decoder.acceptSeekFrame(backendFrame{Kind: backendFrameAudio, PTS: 4990 * time.Millisecond, Duration: 20 * time.Millisecond}) {
+	if !decoder.acceptSeekFrameLocked(backendFrame{Kind: backendFrameAudio, PTS: 4990 * time.Millisecond, Duration: 20 * time.Millisecond}) {
 		t.Fatal("rejected the audio frame covering the seek target")
 	}
 	if decoder.seeking {
