@@ -7,10 +7,48 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestSampleRateMismatchPolicy(t *testing.T) {
+	originalLogger := pkgLogger
+	defer SetLogger(originalLogger)
+
+	var output bytes.Buffer
+	SetLogger(log.New(&output, "", 0))
+	info := backendMediaInfo{Audio: &backendAudioInfo{SampleRate: 44_100}}
+
+	if err := checkSampleRateMismatch(info, 48_000, nil); err != nil {
+		t.Fatalf("default mismatch policy: %v", err)
+	}
+	message := output.String()
+	if !strings.Contains(message, "44100 Hz") || !strings.Contains(message, "48000 Hz") || !strings.Contains(message, "converting") {
+		t.Fatalf("mismatch warning = %q, want both rates and conversion notice", message)
+	}
+
+	output.Reset()
+	err := checkSampleRateMismatch(info, 48_000, &PlayerOptions{RejectSampleRateMismatch: true})
+	if !errors.Is(err, ErrBadSampleRate) {
+		t.Fatalf("strict mismatch error = %v, want ErrBadSampleRate", err)
+	}
+	if !strings.Contains(err.Error(), "44100 Hz") || !strings.Contains(err.Error(), "48000 Hz") {
+		t.Fatalf("strict mismatch error = %q, want both rates", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("strict mismatch was logged despite being returned: %q", output.String())
+	}
+
+	if err := checkSampleRateMismatch(info, 44_100, nil); err != nil {
+		t.Fatalf("matching sample rate: %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("matching sample rate produced a warning: %q", output.String())
+	}
+}
 
 func TestFFGORGBAFastAndPaddedCopies(t *testing.T) {
 	packed := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}

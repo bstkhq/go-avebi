@@ -29,11 +29,27 @@ type Player struct {
 }
 
 func NewPlayerWithoutAudio(videoFilename string) (*Player, error) {
-	return newFFGOPlayer(videoFilename, true, nil)
+	return newFFGOPlayer(videoFilename, true, nil, nil)
 }
 
 func NewPlayer(videoFilename string) (*Player, error) {
-	return newFFGOPlayer(videoFilename, false, nil)
+	return NewPlayerWithOptions(videoFilename, nil)
+}
+
+// PlayerOptions configures local media playback.
+type PlayerOptions struct {
+	// RejectSampleRateMismatch makes opening fail with ErrBadSampleRate when the
+	// media and Ebitengine audio context use different sample rates. By default,
+	// NewPlayer converts the media sample rate and reports the mismatch through
+	// the package Logger.
+	RejectSampleRateMismatch bool
+}
+
+func NewPlayerWithOptions(videoFilename string, options *PlayerOptions) (*Player, error) {
+	if options == nil {
+		options = &PlayerOptions{}
+	}
+	return newFFGOPlayer(videoFilename, false, options, nil)
 }
 
 func NewStreamPlayer(videoFilename string) (*Player, error) {
@@ -52,10 +68,10 @@ func NewStreamPlayerWithOptions(videoFilename string, options *StreamOptions) (*
 	if options.ReadTimeout == 0 {
 		options.ReadTimeout = 200 * time.Millisecond
 	}
-	return newFFGOPlayer(videoFilename, true, options)
+	return newFFGOPlayer(videoFilename, true, nil, options)
 }
 
-func newFFGOPlayer(source string, ignoreAudio bool, streamOptions *StreamOptions) (*Player, error) {
+func newFFGOPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptions, streamOptions *StreamOptions) (*Player, error) {
 	backend := newMediaBackend()
 	opts := backendOpenOptions{DisableAudio: ignoreAudio}
 	if ctx := audio.CurrentContext(); ctx != nil {
@@ -87,6 +103,12 @@ func newFFGOPlayer(source string, ignoreAudio bool, streamOptions *StreamOptions
 			_ = decoder.Close()
 			return nil, ErrNilAudioContext
 		}
+		if !ignoreAudio {
+			if err := checkSampleRateMismatch(info, opts.OutputSampleRate, playerOptions); err != nil {
+				_ = decoder.Close()
+				return nil, err
+			}
+		}
 		controller = newFFGOLocalController(decoder)
 	}
 
@@ -101,6 +123,21 @@ func newFFGOPlayer(source string, ignoreAudio bool, streamOptions *StreamOptions
 		currentFrame: image,
 		onBlackFrame: true,
 	}, nil
+}
+
+func checkSampleRateMismatch(info backendMediaInfo, outputSampleRate int, options *PlayerOptions) error {
+	if info.Audio == nil || info.Audio.SampleRate <= 0 || outputSampleRate <= 0 || info.Audio.SampleRate == outputSampleRate {
+		return nil
+	}
+	if options != nil && options.RejectSampleRateMismatch {
+		return fmt.Errorf("%w: media=%d Hz, audio context=%d Hz", ErrBadSampleRate, info.Audio.SampleRate, outputSampleRate)
+	}
+	pkgLogger.Printf(
+		"WARNING: media audio sample rate = %d Hz, audio context sample rate = %d Hz; converting audio sample rate",
+		info.Audio.SampleRate,
+		outputSampleRate,
+	)
+	return nil
 }
 
 func (p *Player) CurrentFrame() (*ebiten.Image, error) {

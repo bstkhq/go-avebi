@@ -136,6 +136,20 @@ Use `NewPlayerWithoutAudio` when no audio context should be created. The player
 also exposes `Pause`, `Stop`, `Seek`, `Position`, `Duration`, `State`,
 `HasEnded`, loop controls, and volume/mute controls.
 
+If the media and Ebitengine audio context use different sample rates,
+`NewPlayer` converts the audio and reports the mismatch through the package
+logger. Applications that prefer to reject the media can opt out:
+
+```go
+player, err := avebi.NewPlayerWithOptions(path, &avebi.PlayerOptions{
+	RejectSampleRateMismatch: true,
+})
+```
+
+In that case, a mismatch returns `ErrBadSampleRate` with both sample rates in
+the error message. `GetMediaAudioSampleRate` can be used to inspect a source
+before opening a player.
+
 For a video-only live stream:
 
 ```go
