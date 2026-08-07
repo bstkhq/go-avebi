@@ -26,4 +26,4 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 )
 
-replace github.com/obinnaokechukwu/ffgo => github.com/erparts/ffgo v0.0.0-20260806205326-4bb322ae3396
+replace github.com/obinnaokechukwu/ffgo => github.com/erparts/ffgo v0.0.0-20260806221945-0fd8f50d50c3

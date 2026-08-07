@@ -18,17 +18,14 @@ jobs:
     name: FFmpeg ${{ matrix.ffmpeg }} (${{ matrix.status }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - ffmpeg: 6
             status: required
-            experimental: false
           - ffmpeg: 7
-            status: experimental
-            experimental: true
+            status: required
 
     env:
       ALSA_CONFIG_PATH: ${{ github.workspace }}/.github/alsa-pulse.conf
@@ -143,7 +140,6 @@ jobs:
         run: xvfb-run -a -s "-screen 0 1280x720x24" go test -count=1 ./...
 
       - name: Run go-ebiten-mcp control and torture test
-        if: success() || matrix.experimental
         env:
           AVEBI_MCP_TEST_MEDIA: ${{ github.workspace }}/.ci-cache/media/av-smoke.mp4
           AVEBI_MCP_TORTURE_CYCLES: "100"
@@ -152,9 +148,3 @@ jobs:
           go test -count=1
           -run '^TestFFGOMCPIntegrationAndTorture$' -v
           ./examples/mediaplayer
-
-      - name: Explain experimental FFmpeg 7 result
-        if: matrix.experimental && always()
-        run: >-
-          echo "::notice::FFmpeg 7 currently exercises the known pending ABI work;
-          this matrix entry is allowed to fail until that support is implemented."
