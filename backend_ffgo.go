@@ -181,9 +181,10 @@ func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper) (backend
 			_ = d.scaler.Close()
 		}
 		// Source and destination dimensions intentionally match: swscale is used
-		// for pixel-format and YUV-to-RGB conversion, not geometric resizing.
-		// Bilinear filtering still gives sensible chroma upsampling for subsampled
-		// YUV inputs such as YUV420P.
+		// for pixel-format and YUV-to-RGB conversion, not geometric resizing. We
+		// keep ffgo's bilinear default, but FFmpeg does not clearly specify how the
+		// choice affects chroma handling on this unscaled conversion, and avebi does
+		// not rely on a particular effect.
 		scaler, err := ffgo.NewScaler(width, height, sourceFormat, width, height, ffgo.PixelFormatRGBA, ffgo.ScaleBilinear)
 		if err != nil {
 			return backendFrame{}, false, err
