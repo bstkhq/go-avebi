@@ -257,8 +257,9 @@ func readAndValidateFFGOFrames(t *testing.T, decoder mediaDecoder, wantAudio boo
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	var gotVideo, gotAudio bool
+	var videoBuffers backendVideoBufferPool
 	for time.Now().Before(deadline) && (!gotVideo || wantAudio && !gotAudio) {
-		frame, err := decoder.ReadFrame(context.Background())
+		frame, err := decoder.ReadFrame(context.Background(), &videoBuffers)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
@@ -278,6 +279,7 @@ func readAndValidateFFGOFrames(t *testing.T, decoder mediaDecoder, wantAudio boo
 			}
 			gotAudio = true
 		}
+		recycleBackendFrame(&videoBuffers, &frame)
 	}
 	return gotVideo, gotAudio
 }
@@ -286,8 +288,9 @@ func validateFFGOSeek(t *testing.T, decoder mediaDecoder, target time.Duration, 
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	var gotVideo, gotAudio bool
+	var videoBuffers backendVideoBufferPool
 	for time.Now().Before(deadline) && (!gotVideo || wantAudio && !gotAudio) {
-		frame, err := decoder.ReadFrame(context.Background())
+		frame, err := decoder.ReadFrame(context.Background(), &videoBuffers)
 		if err != nil {
 			t.Fatalf("read after seek: %v", err)
 		}
@@ -300,6 +303,7 @@ func validateFFGOSeek(t *testing.T, decoder mediaDecoder, target time.Duration, 
 		case backendFrameAudio:
 			gotAudio = true
 		}
+		recycleBackendFrame(&videoBuffers, &frame)
 	}
 	if !gotVideo {
 		t.Fatal("no video frame decoded after seek")

@@ -3,6 +3,7 @@
 package avebi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -10,6 +11,123 @@ import (
 	"testing"
 	"time"
 )
+
+func TestFFGORGBAFastAndPaddedCopies(t *testing.T) {
+	packed := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	gotPacked := make([]byte, len(packed))
+	copyFFGORGBA(gotPacked, packed, 8, 8, 2)
+	if !bytes.Equal(gotPacked, packed) {
+		t.Fatalf("packed RGBA copy = %v, want %v", gotPacked, packed)
+	}
+
+	padded := []byte{
+		1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0,
+		9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 0,
+	}
+	gotPadded := make([]byte, len(packed))
+	copyFFGORGBA(gotPadded, padded, 12, 8, 2)
+	if !bytes.Equal(gotPadded, packed) {
+		t.Fatalf("padded RGBA copy = %v, want %v", gotPadded, packed)
+	}
+}
+
+func BenchmarkFFGORGBAReuse(b *testing.B) {
+	const width, height = 320, 180
+	size := width * height * 4
+	src := make([]byte, size)
+	var pool backendVideoBufferPool
+
+	b.ReportAllocs()
+	b.SetBytes(int64(size))
+	b.ResetTimer()
+	for b.Loop() {
+		dst := pool.get(size)
+		copyFFGORGBA(dst, src, width*4, width*4, height)
+		pool.put(dst)
+	}
+}
+
+func TestBackendVideoBufferPoolReusesBuffer(t *testing.T) {
+	var pool backendVideoBufferPool
+	first := pool.get(16)
+	firstAddress := &first[0]
+	pool.put(first)
+
+	second := pool.get(16)
+	if &second[0] != firstAddress {
+		t.Fatal("video buffer was not reused")
+	}
+	pool.put(second)
+	for range maxPooledVideoBuffers + 2 {
+		pool.put(make([]byte, 16))
+	}
+	if got := len(pool.buffers); got != maxPooledVideoBuffers {
+		t.Fatalf("pooled buffers = %d, want %d", got, maxPooledVideoBuffers)
+	}
+	larger := make([]byte, 32)
+	pool.put(larger)
+	resized := pool.get(len(larger))
+	if &resized[0] != &larger[0] {
+		t.Fatal("pool did not prefer the larger buffer after a resolution increase")
+	}
+}
+
+func TestFFGOStreamMovesPendingFrameBeforeRecyclingDisplayedFrame(t *testing.T) {
+	oldPixels := make([]byte, 16)
+	newPixels := make([]byte, 16)
+	controller := &ffgoStreamController{
+		lastVideo:    &backendFrame{Kind: backendFrameVideo, Video: backendVideoFrame{RGBA: oldPixels}},
+		pendingVideo: &backendFrame{Kind: backendFrameVideo, Video: backendVideoFrame{RGBA: newPixels}},
+	}
+
+	frame, _, err := controller.CurrentVideoFrame()
+	if err != nil {
+		t.Fatalf("CurrentVideoFrame: %v", err)
+	}
+	if frame == nil || len(frame.Video.RGBA) == 0 || &frame.Video.RGBA[0] != &newPixels[0] {
+		t.Fatal("CurrentVideoFrame did not promote the pending frame")
+	}
+	if controller.pendingVideo != nil {
+		t.Fatal("pending frame remained after promotion")
+	}
+
+	recycled := controller.videoBuffers.get(len(oldPixels))
+	if &recycled[0] != &oldPixels[0] {
+		t.Fatal("previously displayed buffer was not recycled")
+	}
+	if &recycled[0] == &newPixels[0] {
+		t.Fatal("currently displayed buffer was recycled too early")
+	}
+}
+
+func TestFFGOLocalResetRecyclesDisplayedAndQueuedFrames(t *testing.T) {
+	firstPixels := make([]byte, 16)
+	secondPixels := make([]byte, 16)
+	thirdPixels := make([]byte, 16)
+	controller := &ffgoLocalController{
+		lastVideo: &backendFrame{
+			Kind:  backendFrameVideo,
+			Video: backendVideoFrame{RGBA: firstPixels},
+		},
+		videoQueue: []backendFrame{
+			{Kind: backendFrameVideo, Video: backendVideoFrame{RGBA: secondPixels}},
+			{Kind: backendFrameVideo, Video: backendVideoFrame{RGBA: thirdPixels}},
+		},
+	}
+
+	controller.noLockResetPlayback(time.Second)
+	if controller.lastVideo != nil || len(controller.videoQueue) != 0 {
+		t.Fatalf("video frames remained after reset: last=%v queued=%d", controller.lastVideo, len(controller.videoQueue))
+	}
+	wantBuffers := map[*byte]bool{&firstPixels[0]: true, &secondPixels[0]: true, &thirdPixels[0]: true}
+	for range len(wantBuffers) {
+		got := controller.videoBuffers.get(16)
+		if !wantBuffers[&got[0]] {
+			t.Fatal("reset returned a buffer that was not owned by a released frame")
+		}
+		delete(wantBuffers, &got[0])
+	}
+}
 
 type fakeMediaDecoder struct {
 	info      backendMediaInfo
@@ -41,7 +159,7 @@ func (p *fakeFFGOAudioPlayer) Close() error {
 
 func (d *fakeMediaDecoder) Info() backendMediaInfo { return d.info }
 
-func (d *fakeMediaDecoder) ReadFrame(context.Context) (backendFrame, error) {
+func (d *fakeMediaDecoder) ReadFrame(context.Context, *backendVideoBufferPool) (backendFrame, error) {
 	if d.readIndex >= len(d.frames) {
 		return backendFrame{}, io.EOF
 	}
@@ -306,7 +424,7 @@ type eofMediaDecoder struct {
 }
 
 func (*eofMediaDecoder) Info() backendMediaInfo { return backendMediaInfo{} }
-func (*eofMediaDecoder) ReadFrame(context.Context) (backendFrame, error) {
+func (*eofMediaDecoder) ReadFrame(context.Context, *backendVideoBufferPool) (backendFrame, error) {
 	return backendFrame{}, io.EOF
 }
 func (*eofMediaDecoder) Seek(time.Duration) error { return nil }

@@ -25,6 +25,8 @@ type ffgoStreamController struct {
 	err    error
 
 	lastVideo         *backendFrame
+	pendingVideo      *backendFrame
+	videoBuffers      backendVideoBufferPool
 	referencePosition time.Duration
 	referenceTime     time.Time
 	havePTSBase       bool
@@ -86,7 +88,7 @@ func (c *ffgoStreamController) Play() error {
 	}
 	c.decoder = decoder
 	c.err = nil
-	c.lastVideo = nil
+	c.noLockRecycleVideoFrames()
 	c.referencePosition = 0
 	c.referenceTime = time.Now()
 	c.havePTSBase = false
@@ -115,16 +117,13 @@ func (c *ffgoStreamController) Pause() error {
 
 func (c *ffgoStreamController) Stop() error {
 	c.mutex.Lock()
-	if c.state == Stopped && c.decoder == nil {
-		c.mutex.Unlock()
-		return nil
-	}
 	stopCh := c.stopCh
 	decoder := c.decoder
+	decodedCh := c.decodedCh
 	c.stopCh = nil
 	c.decoder = nil
+	c.decodedCh = nil
 	c.state = Stopped
-	c.lastVideo = nil
 	c.referencePosition = 0
 	c.referenceTime = time.Time{}
 	if stopCh != nil {
@@ -137,9 +136,10 @@ func (c *ffgoStreamController) Stop() error {
 		closeErr = decoder.Close()
 	}
 	c.wg.Wait()
+	c.recycleDecodedFrames(decodedCh)
 
 	c.mutex.Lock()
-	c.decodedCh = nil
+	c.noLockRecycleVideoFrames()
 	c.havePTSBase = false
 	c.mutex.Unlock()
 	return closeErr
@@ -149,6 +149,7 @@ func (c *ffgoStreamController) Close() error {
 	err := c.Stop()
 	c.mutex.Lock()
 	c.closed = true
+	c.videoBuffers.clear()
 	c.mutex.Unlock()
 	return err
 }
@@ -183,6 +184,11 @@ func (*ffgoStreamController) SetMuted(bool)           {}
 func (c *ffgoStreamController) CurrentVideoFrame() (*backendFrame, bool, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
+	if c.pendingVideo != nil {
+		recycleBackendFrame(&c.videoBuffers, c.lastVideo)
+		c.lastVideo = c.pendingVideo
+		c.pendingVideo = nil
+	}
 	return c.lastVideo, false, c.err
 }
 
@@ -201,7 +207,7 @@ func (c *ffgoStreamController) decodeLoop(decoder mediaDecoder, stop chan struct
 		default:
 		}
 
-		frame, err := decoder.ReadFrame(context.Background())
+		frame, err := decoder.ReadFrame(context.Background(), &c.videoBuffers)
 		if err != nil {
 			select {
 			case <-stop:
@@ -235,6 +241,7 @@ func (c *ffgoStreamController) decodeLoop(decoder mediaDecoder, stop chan struct
 		}
 		select {
 		case <-stop:
+			recycleBackendFrame(&c.videoBuffers, &frame)
 			return
 		case decoded <- frame:
 		}
@@ -243,12 +250,17 @@ func (c *ffgoStreamController) decodeLoop(decoder mediaDecoder, stop chan struct
 
 func (c *ffgoStreamController) scheduleLoop(stop <-chan struct{}, decoded <-chan backendFrame) {
 	defer c.wg.Done()
+	defer c.recycleDecodedFrames(decoded)
 	for {
 		select {
 		case <-stop:
 			return
-		case frame := <-decoded:
+		case frame, ok := <-decoded:
+			if !ok {
+				return
+			}
 			if !c.waitUntilPlaying(stop) {
+				recycleBackendFrame(&c.videoBuffers, &frame)
 				return
 			}
 
@@ -269,6 +281,7 @@ func (c *ffgoStreamController) scheduleLoop(stop <-chan struct{}, decoded <-chan
 					if !timer.Stop() {
 						<-timer.C
 					}
+					recycleBackendFrame(&c.videoBuffers, &frame)
 					return
 				case <-timer.C:
 				}
@@ -276,12 +289,39 @@ func (c *ffgoStreamController) scheduleLoop(stop <-chan struct{}, decoded <-chan
 
 			c.mutex.Lock()
 			if c.state == Playing {
+				recycleBackendFrame(&c.videoBuffers, c.pendingVideo)
 				copyFrame := frame
-				c.lastVideo = &copyFrame
+				c.pendingVideo = &copyFrame
 				c.referencePosition = frame.PTS - c.ptsBase
 				c.referenceTime = time.Now()
+				frame = backendFrame{}
 			}
 			c.mutex.Unlock()
+			recycleBackendFrame(&c.videoBuffers, &frame)
+		}
+	}
+}
+
+func (c *ffgoStreamController) noLockRecycleVideoFrames() {
+	recycleBackendFrame(&c.videoBuffers, c.lastVideo)
+	recycleBackendFrame(&c.videoBuffers, c.pendingVideo)
+	c.lastVideo = nil
+	c.pendingVideo = nil
+}
+
+func (c *ffgoStreamController) recycleDecodedFrames(decoded <-chan backendFrame) {
+	if decoded == nil {
+		return
+	}
+	for {
+		select {
+		case frame, ok := <-decoded:
+			if !ok {
+				return
+			}
+			recycleBackendFrame(&c.videoBuffers, &frame)
+		default:
+			return
 		}
 	}
 }

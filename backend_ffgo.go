@@ -126,7 +126,7 @@ func mediaInfoFromFFGO(decoder *ffgo.Decoder) backendMediaInfo {
 
 func (d *ffgoDecoder) Info() backendMediaInfo { return d.info }
 
-func (d *ffgoDecoder) ReadFrame(ctx context.Context) (backendFrame, error) {
+func (d *ffgoDecoder) ReadFrame(ctx context.Context, videoBuffers *backendVideoBufferPool) (backendFrame, error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 
@@ -147,11 +147,12 @@ func (d *ffgoDecoder) ReadFrame(ctx context.Context) (backendFrame, error) {
 			return backendFrame{}, io.EOF
 		}
 
-		converted, ok, err := d.convertFrameLocked(frame)
+		converted, ok, err := d.convertFrameLocked(frame, videoBuffers)
 		if err != nil {
 			return backendFrame{}, err
 		}
 		if !ok || !d.acceptSeekFrameLocked(converted) {
+			recycleBackendFrame(videoBuffers, &converted)
 			continue
 		}
 		return converted, nil
@@ -159,10 +160,10 @@ func (d *ffgoDecoder) ReadFrame(ctx context.Context) (backendFrame, error) {
 }
 
 // The *Locked helpers below require d.mutex to be held by the caller.
-func (d *ffgoDecoder) convertFrameLocked(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
+func (d *ffgoDecoder) convertFrameLocked(frame *ffgo.FrameWrapper, videoBuffers *backendVideoBufferPool) (backendFrame, bool, error) {
 	switch frame.MediaType() {
 	case ffgo.MediaTypeVideo:
-		return d.convertVideoFrameLocked(frame)
+		return d.convertVideoFrameLocked(frame, videoBuffers)
 	case ffgo.MediaTypeAudio:
 		return d.convertAudioFrameLocked(frame)
 	default:
@@ -170,7 +171,7 @@ func (d *ffgoDecoder) convertFrameLocked(frame *ffgo.FrameWrapper) (backendFrame
 	}
 }
 
-func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
+func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper, videoBuffers *backendVideoBufferPool) (backendFrame, bool, error) {
 	width, height := frame.Width(), frame.Height()
 	if width <= 0 || height <= 0 {
 		width, height = d.info.Video.Width, d.info.Video.Height
@@ -199,9 +200,9 @@ func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper) (backend
 	if err != nil {
 		return backendFrame{}, false, err
 	}
-	// Scale returns a raw frame. WrapFrame exposes its data pointer and stride;
-	// the row copy below removes any FFmpeg padding and produces tightly packed
-	// RGBA bytes for ebiten.Image.WritePixels.
+	// Scale returns a scaler-owned raw frame that is overwritten by the next
+	// call. WrapFrame exposes its data pointer and stride; copyFFGORGBA detaches
+	// it into reusable, tightly packed storage for ebiten.Image.WritePixels.
 	wrapped := ffgo.WrapFrame(scaled, ffgo.MediaTypeVideo)
 	stride := wrapped.Linesize(0)
 	rowSize := width * 4
@@ -213,10 +214,8 @@ func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper) (backend
 		return backendFrame{}, false, fmt.Errorf("avebi: ffgo returned a truncated RGBA frame")
 	}
 
-	rgba := make([]byte, rowSize*height)
-	for row := 0; row < height; row++ {
-		copy(rgba[row*rowSize:(row+1)*rowSize], data[row*stride:row*stride+rowSize])
-	}
+	rgba := videoBuffers.get(rowSize * height)
+	copyFFGORGBA(rgba, data, stride, rowSize, height)
 
 	pts := ffgoPTS(frame.PTS(), d.decoder.VideoStream().TimeBase)
 	duration := d.info.Video.FrameDuration()
@@ -231,6 +230,16 @@ func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper) (backend
 			Stride: rowSize,
 		},
 	}, true, nil
+}
+
+func copyFFGORGBA(dst, src []byte, stride, rowSize, height int) {
+	if stride == rowSize {
+		copy(dst, src[:len(dst)])
+		return
+	}
+	for row := 0; row < height; row++ {
+		copy(dst[row*rowSize:(row+1)*rowSize], src[row*stride:row*stride+rowSize])
+	}
 }
 
 func (d *ffgoDecoder) convertAudioFrameLocked(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {

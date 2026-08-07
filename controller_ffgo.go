@@ -64,9 +64,10 @@ type ffgoLocalController struct {
 	referencePosition time.Duration
 	staticPosition    time.Duration
 
-	lastVideo  *backendFrame
-	videoQueue []backendFrame
-	audioQueue []byte
+	lastVideo    *backendFrame
+	videoQueue   []backendFrame
+	videoBuffers backendVideoBufferPool
+	audioQueue   []byte
 
 	hasAudio           bool
 	audioPlayer        ffgoAudioPlayer
@@ -187,7 +188,9 @@ func (c *ffgoLocalController) Close() error {
 	}
 	c.closed = true
 	playerErr := c.noLockCloseAudioPlayer()
+	c.noLockRecycleVideoFrames()
 	decoderErr := c.decoder.Close()
+	c.videoBuffers.clear()
 	return errors.Join(playerErr, decoderErr)
 }
 
@@ -256,7 +259,7 @@ func (c *ffgoLocalController) Seek(position time.Duration) (*backendFrame, error
 // requested target.
 func (c *ffgoLocalController) noLockPrimeAfterSeek() (*backendFrame, error) {
 	for {
-		frame, err := c.decoder.ReadFrame(context.Background())
+		frame, err := c.decoder.ReadFrame(context.Background(), &c.videoBuffers)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return c.lastVideo, nil
@@ -265,8 +268,7 @@ func (c *ffgoLocalController) noLockPrimeAfterSeek() (*backendFrame, error) {
 		}
 		switch frame.Kind {
 		case backendFrameVideo:
-			copyFrame := frame
-			c.lastVideo = &copyFrame
+			c.noLockReplaceLastVideo(frame)
 			return c.lastVideo, nil
 		case backendFrameAudio:
 			if c.hasAudio {
@@ -336,8 +338,7 @@ func (c *ffgoLocalController) noLockPosition(now time.Time) (time.Duration, erro
 		if err := c.decoder.Seek(position); err != nil {
 			return 0, err
 		}
-		c.lastVideo = nil
-		c.videoQueue = c.videoQueue[:0]
+		c.noLockRecycleVideoFrames()
 		c.referencePosition = position
 		c.referenceTime = now
 		return position, nil
@@ -437,14 +438,14 @@ func (c *ffgoLocalController) CurrentVideoFrame() (*backendFrame, bool, error) {
 	}
 
 	for c.lastVideo == nil || c.lastVideo.PTS+c.frameDuration() < position {
-		frame, err := c.decoder.ReadFrame(context.Background())
+		frame, err := c.decoder.ReadFrame(context.Background(), &c.videoBuffers)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				if c.looping {
 					if err := c.decoder.Seek(0); err != nil {
 						return nil, false, err
 					}
-					c.lastVideo = nil
+					c.noLockRecycleVideoFrames()
 					c.referencePosition = 0
 					c.referenceTime = time.Now()
 					return nil, false, nil
@@ -459,8 +460,7 @@ func (c *ffgoLocalController) CurrentVideoFrame() (*backendFrame, bool, error) {
 			return nil, false, err
 		}
 		if frame.Kind == backendFrameVideo {
-			copyFrame := frame
-			c.lastVideo = &copyFrame
+			c.noLockReplaceLastVideo(frame)
 		}
 	}
 	return c.lastVideo, false, nil
@@ -469,18 +469,35 @@ func (c *ffgoLocalController) CurrentVideoFrame() (*backendFrame, bool, error) {
 func (c *ffgoLocalController) noLockConsumeVideoQueue(position time.Duration) {
 	consumed := 0
 	for consumed < len(c.videoQueue) {
-		frame := c.videoQueue[consumed]
+		frame := &c.videoQueue[consumed]
 		if c.lastVideo != nil && frame.PTS+frame.Duration > position {
 			break
 		}
-		copyFrame := frame
-		c.lastVideo = &copyFrame
+		next := *frame
+		*frame = backendFrame{}
+		c.noLockReplaceLastVideo(next)
 		consumed++
 	}
 	if consumed > 0 {
 		copy(c.videoQueue, c.videoQueue[consumed:])
+		clear(c.videoQueue[len(c.videoQueue)-consumed:])
 		c.videoQueue = c.videoQueue[:len(c.videoQueue)-consumed]
 	}
+}
+
+func (c *ffgoLocalController) noLockReplaceLastVideo(frame backendFrame) {
+	recycleBackendFrame(&c.videoBuffers, c.lastVideo)
+	copyFrame := frame
+	c.lastVideo = &copyFrame
+}
+
+func (c *ffgoLocalController) noLockRecycleVideoFrames() {
+	recycleBackendFrame(&c.videoBuffers, c.lastVideo)
+	c.lastVideo = nil
+	for i := range c.videoQueue {
+		recycleBackendFrame(&c.videoBuffers, &c.videoQueue[i])
+	}
+	c.videoQueue = c.videoQueue[:0]
 }
 
 func (c *ffgoLocalController) frameDuration() time.Duration {
@@ -506,7 +523,7 @@ func (c *ffgoLocalController) Read(buffer []byte) (int, error) {
 	served := c.noLockCopyAudio(buffer)
 	buffer = buffer[served:]
 	for len(buffer) > 0 {
-		frame, err := c.decoder.ReadFrame(context.Background())
+		frame, err := c.decoder.ReadFrame(context.Background(), &c.videoBuffers)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				// The decoder can reach EOF while Oto still has buffered PCM to
@@ -588,8 +605,7 @@ func (c *ffgoLocalController) noLockCloseAudioPlayer() error {
 }
 
 func (c *ffgoLocalController) noLockResetPlayback(position time.Duration) {
-	c.lastVideo = nil
-	c.videoQueue = c.videoQueue[:0]
+	c.noLockRecycleVideoFrames()
 	c.audioQueue = c.audioQueue[:0]
 	c.firstAudioPTS = position
 	c.audioEOF = false
