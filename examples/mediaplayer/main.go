@@ -48,7 +48,7 @@ func main() {
 		panic(err)
 	}
 
-	videoPlayer, err := avebi.NewPlayer(path) // alternatively: avebi.NewPlayerWithoutAudio(path)
+	videoPlayer, err := avebi.NewPlayer(path)
 	if err != nil {
 		panic(err)
 	}

@@ -93,15 +93,15 @@ func TestFFGOBackendMedia(t *testing.T) {
 	validateFFGOSeek(t, decoder, seekTarget, wantAudio)
 }
 
-func TestFFGOPlayerWithoutAudioMedia(t *testing.T) {
+func TestFFGOPlayerWithDisabledAudioMedia(t *testing.T) {
 	mediaPath := os.Getenv("AVEBI_TEST_MEDIA")
 	if mediaPath == "" {
 		t.Skip("set AVEBI_TEST_MEDIA to run the ffgo integration test")
 	}
 
-	player, err := NewPlayerWithoutAudio(mediaPath)
+	player, err := NewPlayerWithOptions(mediaPath, &PlayerOptions{DisableAudio: true})
 	if err != nil {
-		t.Fatalf("NewPlayerWithoutAudio: %v", err)
+		t.Fatalf("NewPlayerWithOptions: %v", err)
 	}
 	t.Cleanup(func() {
 		if err := player.Close(); err != nil {
@@ -117,7 +117,7 @@ func TestFFGOPlayerWithoutAudioMedia(t *testing.T) {
 		t.Fatalf("invalid player duration: %s", player.Duration())
 	}
 	if player.HasAudio() {
-		t.Fatal("NewPlayerWithoutAudio reported an audio stream")
+		t.Fatal("player with disabled audio reported an audio stream")
 	}
 	if _, err := player.CurrentFrame(); err != nil {
 		t.Fatalf("CurrentFrame while stopped: %v", err)

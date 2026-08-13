@@ -125,9 +125,9 @@ func main() {
 }
 ```
 
-Use `NewPlayerWithoutAudio` when no audio context should be created. The player
-also exposes `Pause`, `Stop`, `Seek`, `Position`, `Duration`, `State`,
-`HasEnded`, loop controls, and volume/mute controls.
+The player also exposes `Pause`, `Stop`, `Seek`, `Position`, `Duration`,
+`State`, `HasEnded`, loop controls, and volume/mute controls. Use
+`NewPlayerWithOptions` for further audio options.
 
 If the media and Ebitengine audio context use different sample rates,
 `NewPlayer` converts the audio and reports the mismatch through the package

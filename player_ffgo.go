@@ -28,16 +28,16 @@ type Player struct {
 	onBlackFrame      bool
 }
 
-func NewPlayerWithoutAudio(videoFilename string) (*Player, error) {
-	return newFFGOPlayer(videoFilename, true, nil, nil)
-}
-
 func NewPlayer(videoFilename string) (*Player, error) {
 	return NewPlayerWithOptions(videoFilename, nil)
 }
 
 // PlayerOptions configures local media playback.
 type PlayerOptions struct {
+	// DisableAudio ignores the media's audio streams and does not require an
+	// Ebitengine audio context.
+	DisableAudio bool
+
 	// RejectSampleRateMismatch makes opening fail with ErrBadSampleRate when the
 	// media and Ebitengine audio context use different sample rates. By default,
 	// NewPlayer converts the media sample rate and reports the mismatch through
@@ -49,7 +49,7 @@ func NewPlayerWithOptions(videoFilename string, options *PlayerOptions) (*Player
 	if options == nil {
 		options = &PlayerOptions{}
 	}
-	return newFFGOPlayer(videoFilename, false, options, nil)
+	return newFFGOPlayer(videoFilename, options.DisableAudio, options, nil)
 }
 
 func NewStreamPlayer(videoFilename string) (*Player, error) {
