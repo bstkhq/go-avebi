@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	ebitenmcp "github.com/bstkhq/go-ebiten-mcp"
 	"github.com/erparts/go-avebi"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
@@ -47,7 +48,7 @@ func main() {
 		panic(err)
 	}
 
-	videoPlayer, err := avebi.NewPlayer(path) // alternatively: avebi.NewPlayerWithoutAudio(path)
+	videoPlayer, err := avebi.NewPlayer(path)
 	if err != nil {
 		panic(err)
 	}
@@ -58,12 +59,21 @@ func main() {
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetWindowSize(1280, 720)
 
-	// create test app
-	err = ebiten.RunGame(&MediaPlayer{
+	// Create the test app. go-ebiten-mcp is inert unless EBITEN_MCP_ADDR is
+	// configured, so normal example runs keep their original behavior.
+	game := &MediaPlayer{
 		videoPath:   path,
 		videoPlayer: videoPlayer,
 		duration:    videoPlayer.Duration(),
-	})
+	}
+	err = ebitenmcp.RunGame(
+		game,
+		ebitenmcp.WithName("avebi-mediaplayer"),
+		ebitenmcp.WithCaptureStage(ebitenmcp.StageOffscreen),
+		ebitenmcp.WithState("player", func(current ebiten.Game) any {
+			return current.(*MediaPlayer).snapshot()
+		}),
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -79,6 +89,41 @@ type MediaPlayer struct {
 
 	rectVertices  [4]ebiten.Vertex // clockwise starting from top-left
 	rectWhiteMask *ebiten.Image
+}
+
+type playerSnapshot struct {
+	State      string  `json:"state"`
+	PositionMS int64   `json:"position_ms"`
+	DurationMS int64   `json:"duration_ms"`
+	FramePTS   int64   `json:"frame_pts_ms"`
+	HasEnded   bool    `json:"has_ended"`
+	HasAudio   bool    `json:"has_audio"`
+	Looping    bool    `json:"looping"`
+	Muted      bool    `json:"muted"`
+	Volume     float64 `json:"volume"`
+	Error      string  `json:"error,omitempty"`
+}
+
+func (m *MediaPlayer) snapshot() playerSnapshot {
+	state, err := m.videoPlayer.State()
+	if err == nil {
+		err = m.videoPlayer.Error()
+	}
+	result := playerSnapshot{
+		State:      state.String(),
+		PositionMS: m.lastPosition.Milliseconds(),
+		DurationMS: m.duration.Milliseconds(),
+		FramePTS:   m.videoPlayer.LastPresentationOffset().Milliseconds(),
+		HasEnded:   m.videoPlayer.HasEnded(),
+		HasAudio:   m.videoPlayer.HasAudio(),
+		Looping:    m.videoPlayer.GetLooping(),
+		Muted:      m.videoPlayer.GetMuted(),
+		Volume:     m.videoPlayer.GetVolume(),
+	}
+	if err != nil {
+		result.Error = err.Error()
+	}
+	return result
 }
 
 func (m *MediaPlayer) Layout(_, _ int) (int, int) {
@@ -138,6 +183,16 @@ func (m *MediaPlayer) Update() error {
 		}
 	} else if inpututil.IsKeyJustPressed(ebiten.KeyL) {
 		m.videoPlayer.SetLooping(!m.videoPlayer.GetLooping())
+	} else if inpututil.IsKeyJustPressed(ebiten.KeyArrowLeft) {
+		err := m.videoPlayer.Seek(max(0, m.lastPosition-time.Second))
+		if err != nil {
+			return err
+		}
+	} else if inpututil.IsKeyJustPressed(ebiten.KeyArrowRight) {
+		err := m.videoPlayer.Seek(min(m.duration, m.lastPosition+time.Second))
+		if err != nil {
+			return err
+		}
 	}
 
 	if inpututil.IsKeyJustPressed(ebiten.KeyI) {
@@ -197,7 +252,7 @@ func (m *MediaPlayer) drawGUI(canvas *ebiten.Image) {
 	if m.videoPlayer.GetLooping() {
 		loopAction = "disable"
 	}
-	info := positionStr + " / " + durationStr + " (SPACE to " + spaceAction + ", S to stop, L to " + loopAction + " looping)"
+	info := positionStr + " / " + durationStr + " (SPACE to " + spaceAction + ", LEFT/RIGHT to seek, S to stop, L to " + loopAction + " looping)"
 	if m.videoPlayer.HasEnded() {
 		info += " (ended)"
 	}

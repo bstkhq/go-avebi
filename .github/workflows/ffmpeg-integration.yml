@@ -1,0 +1,160 @@
+name: FFmpeg integration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffmpeg-integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: FFmpeg ${{ matrix.ffmpeg }} (${{ matrix.status }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ffmpeg: 6
+            release: 6.1.6
+            sha256: d4fcb164028dd3beee5d92c0ac72e46aac6973c75ea12dc14de07bf8f407370a
+            status: required
+          - ffmpeg: 7
+            release: 7.1.5
+            sha256: de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+            status: required
+          - ffmpeg: 8
+            release: 8.1.2
+            sha256: 464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
+            status: required
+          - ffmpeg: 9
+            release: 9.0.1
+            sha256: cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635
+            status: required
+
+    env:
+      ALSA_CONFIG_PATH: ${{ github.workspace }}/.github/alsa-pulse.conf
+      AVEBI_EXPECT_FFMPEG_MAJOR: ${{ matrix.ffmpeg }}
+      AVEBI_TEST_AUDIO: "1"
+      AVEBI_TEST_MEDIA: ${{ github.workspace }}/.ci-cache/media/av-smoke.mp4
+
+    steps:
+      - name: Check out avebi
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            curl \
+            ffmpeg \
+            libasound2-dev \
+            libasound2-plugins \
+            libgl1-mesa-dri \
+            libgl1-mesa-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxxf86vm-dev \
+            pulseaudio \
+            pulseaudio-utils \
+            xz-utils \
+            xvfb
+
+      - name: Generate H.264/AAC integration media
+        run: |
+          mkdir -p .ci-cache/media
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i testsrc2=size=320x180:rate=30 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 3 -c:v libx264 -pix_fmt yuv420p -c:a aac \
+            .ci-cache/media/av-smoke.mp4
+
+      - name: Restore FFmpeg shared libraries
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/ffmpeg-${{ matrix.release }}
+          key: ffmpeg-${{ matrix.release }}-linux-x64-h264-aac-v1
+
+      - name: Build FFmpeg ${{ matrix.release }} shared libraries
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p \
+            .ci-cache/ffmpeg-source \
+            .ci-cache/ffmpeg-build \
+            .ci-cache/ffmpeg-${{ matrix.release }}
+          curl --fail --location --retry 3 \
+            --output .ci-cache/ffmpeg.tar.xz \
+            https://ffmpeg.org/releases/ffmpeg-${{ matrix.release }}.tar.xz
+          echo "${{ matrix.sha256 }}  .ci-cache/ffmpeg.tar.xz" | sha256sum --check --strict
+          tar -xf .ci-cache/ffmpeg.tar.xz \
+            --strip-components=1 \
+            -C .ci-cache/ffmpeg-source
+          cd .ci-cache/ffmpeg-build
+          "$GITHUB_WORKSPACE/.ci-cache/ffmpeg-source/configure" \
+            --prefix="$GITHUB_WORKSPACE/.ci-cache/ffmpeg-${{ matrix.release }}" \
+            --enable-shared \
+            --disable-static \
+            --disable-programs \
+            --disable-doc \
+            --disable-debug \
+            --disable-network \
+            --disable-autodetect \
+            --disable-everything \
+            --disable-x86asm \
+            --enable-protocol=file \
+            --enable-demuxer=mov \
+            --enable-parser=aac,h264,hevc \
+            --enable-decoder=aac,h264,hevc \
+            --enable-swresample \
+            --enable-swscale
+          make -j2
+          make install
+
+      - name: Select FFmpeg runtime
+        run: |
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/.ci-cache/ffmpeg-${{ matrix.release }}/lib" >> "$GITHUB_ENV"
+
+      - name: Start a paced audio sink
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=avebi_ci rate=48000
+          pactl set-default-sink avebi_ci
+          pactl info
+
+      - name: Verify loaded FFmpeg ABI
+        run: >-
+          xvfb-run -a -s "-screen 0 1280x720x24"
+          go test -count=1 -run '^TestFFmpegRuntimeMajor$' -v .
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Run real-media integration suite
+        run: xvfb-run -a -s "-screen 0 1280x720x24" go test -count=1 ./...
+
+      - name: Run go-ebiten-mcp control and torture test
+        env:
+          AVEBI_MCP_TEST_MEDIA: ${{ github.workspace }}/.ci-cache/media/av-smoke.mp4
+          AVEBI_MCP_TORTURE_CYCLES: "100"
+        run: >-
+          xvfb-run -a -s "-screen 0 1280x720x24"
+          go test -count=1
+          -run '^TestFFmpegMCPIntegrationAndTorture$' -v
+          ./examples/mediaplayer
