@@ -54,7 +54,7 @@ func TestMain(m *testing.M) {
 			}
 			return game
 		},
-		ebitenmcp.WithName("avebi-ffgo-torture"),
+		ebitenmcp.WithName("avebi-ffmpeg-torture"),
 		ebitenmcp.WithCaptureStage(ebitenmcp.StageOffscreen),
 		ebitenmcp.WithState("player", func(current ebiten.Game) any {
 			return current.(*mcpTortureGame).snapshot()
@@ -191,7 +191,7 @@ func (g *mcpTortureGame) close() error {
 	return g.player.Close()
 }
 
-func TestFFGOMCPIntegrationAndTorture(t *testing.T) {
+func TestFFmpegMCPIntegrationAndTorture(t *testing.T) {
 	if os.Getenv(mcpTestMediaEnv) == "" {
 		t.Skip("set AVEBI_MCP_TEST_MEDIA to an H.264/AAC file")
 	}

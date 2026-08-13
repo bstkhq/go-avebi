@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-type ffgoStreamController struct {
+type ffiStreamController struct {
 	mutex sync.Mutex
 
 	backend mediaBackend
@@ -39,10 +39,10 @@ type ffgoStreamController struct {
 	wg        sync.WaitGroup
 }
 
-var _ playbackController = (*ffgoStreamController)(nil)
+var _ playbackController = (*ffiStreamController)(nil)
 
-func newFFGOStreamController(backend mediaBackend, source string, opts backendOpenOptions, info backendMediaInfo, decoder mediaDecoder) *ffgoStreamController {
-	return &ffgoStreamController{
+func newFFmpegStreamController(backend mediaBackend, source string, opts backendOpenOptions, info backendMediaInfo, decoder mediaDecoder) *ffiStreamController {
+	return &ffiStreamController{
 		backend: backend,
 		source:  source,
 		opts:    opts,
@@ -52,13 +52,13 @@ func newFFGOStreamController(backend mediaBackend, source string, opts backendOp
 	}
 }
 
-func (c *ffgoStreamController) State() (PlaybackState, error) {
+func (c *ffiStreamController) State() (PlaybackState, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	return c.state, c.err
 }
 
-func (c *ffgoStreamController) Play() error {
+func (c *ffiStreamController) Play() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.closed {
@@ -102,7 +102,7 @@ func (c *ffgoStreamController) Play() error {
 	return nil
 }
 
-func (c *ffgoStreamController) Pause() error {
+func (c *ffiStreamController) Pause() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.state != Playing {
@@ -115,7 +115,7 @@ func (c *ffgoStreamController) Pause() error {
 	return nil
 }
 
-func (c *ffgoStreamController) Stop() error {
+func (c *ffiStreamController) Stop() error {
 	c.mutex.Lock()
 	stopCh := c.stopCh
 	decoder := c.decoder
@@ -145,7 +145,7 @@ func (c *ffgoStreamController) Stop() error {
 	return closeErr
 }
 
-func (c *ffgoStreamController) Close() error {
+func (c *ffiStreamController) Close() error {
 	err := c.Stop()
 	c.mutex.Lock()
 	c.closed = true
@@ -154,34 +154,34 @@ func (c *ffgoStreamController) Close() error {
 	return err
 }
 
-func (*ffgoStreamController) Seek(time.Duration) (*backendFrame, error) {
+func (*ffiStreamController) Seek(time.Duration) (*backendFrame, error) {
 	return nil, fmt.Errorf("cannot seek in live stream")
 }
 
-func (c *ffgoStreamController) Position() (time.Duration, error) {
+func (c *ffiStreamController) Position() (time.Duration, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	return c.noLockPosition(time.Now()), nil
 }
 
-func (c *ffgoStreamController) noLockPosition(now time.Time) time.Duration {
+func (c *ffiStreamController) noLockPosition(now time.Time) time.Duration {
 	if c.state == Playing && !c.referenceTime.IsZero() {
 		return c.referencePosition + now.Sub(c.referenceTime)
 	}
 	return c.referencePosition
 }
 
-func (*ffgoStreamController) Duration() time.Duration { return 0 }
-func (*ffgoStreamController) SetLooping(bool)         {}
-func (*ffgoStreamController) GetLooping() bool        { return false }
-func (*ffgoStreamController) HasEnded() bool          { return false }
-func (*ffgoStreamController) HasAudio() bool          { return false }
-func (*ffgoStreamController) GetVolume() float64      { return 0 }
-func (*ffgoStreamController) SetVolume(float64)       {}
-func (*ffgoStreamController) GetMuted() bool          { return true }
-func (*ffgoStreamController) SetMuted(bool)           {}
+func (*ffiStreamController) Duration() time.Duration { return 0 }
+func (*ffiStreamController) SetLooping(bool)         {}
+func (*ffiStreamController) GetLooping() bool        { return false }
+func (*ffiStreamController) HasEnded() bool          { return false }
+func (*ffiStreamController) HasAudio() bool          { return false }
+func (*ffiStreamController) GetVolume() float64      { return 0 }
+func (*ffiStreamController) SetVolume(float64)       {}
+func (*ffiStreamController) GetMuted() bool          { return true }
+func (*ffiStreamController) SetMuted(bool)           {}
 
-func (c *ffgoStreamController) CurrentVideoFrame() (*backendFrame, bool, error) {
+func (c *ffiStreamController) CurrentVideoFrame() (*backendFrame, bool, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.pendingVideo != nil {
@@ -192,13 +192,13 @@ func (c *ffgoStreamController) CurrentVideoFrame() (*backendFrame, bool, error) 
 	return c.lastVideo, false, c.err
 }
 
-func (c *ffgoStreamController) Error() error {
+func (c *ffiStreamController) Error() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	return c.err
 }
 
-func (c *ffgoStreamController) decodeLoop(decoder mediaDecoder, stop chan struct{}, decoded chan<- backendFrame) {
+func (c *ffiStreamController) decodeLoop(decoder mediaDecoder, stop chan struct{}, decoded chan<- backendFrame) {
 	defer c.wg.Done()
 	for {
 		select {
@@ -248,7 +248,7 @@ func (c *ffgoStreamController) decodeLoop(decoder mediaDecoder, stop chan struct
 	}
 }
 
-func (c *ffgoStreamController) scheduleLoop(stop <-chan struct{}, decoded <-chan backendFrame) {
+func (c *ffiStreamController) scheduleLoop(stop <-chan struct{}, decoded <-chan backendFrame) {
 	defer c.wg.Done()
 	defer c.recycleDecodedFrames(decoded)
 	for {
@@ -302,14 +302,14 @@ func (c *ffgoStreamController) scheduleLoop(stop <-chan struct{}, decoded <-chan
 	}
 }
 
-func (c *ffgoStreamController) noLockRecycleVideoFrames() {
+func (c *ffiStreamController) noLockRecycleVideoFrames() {
 	recycleBackendFrame(&c.videoBuffers, c.lastVideo)
 	recycleBackendFrame(&c.videoBuffers, c.pendingVideo)
 	c.lastVideo = nil
 	c.pendingVideo = nil
 }
 
-func (c *ffgoStreamController) recycleDecodedFrames(decoded <-chan backendFrame) {
+func (c *ffiStreamController) recycleDecodedFrames(decoded <-chan backendFrame) {
 	if decoded == nil {
 		return
 	}
@@ -326,7 +326,7 @@ func (c *ffgoStreamController) recycleDecodedFrames(decoded <-chan backendFrame)
 	}
 }
 
-func (c *ffgoStreamController) waitUntilPlaying(stop <-chan struct{}) bool {
+func (c *ffiStreamController) waitUntilPlaying(stop <-chan struct{}) bool {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {

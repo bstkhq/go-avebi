@@ -50,10 +50,10 @@ func TestSampleRateMismatchPolicy(t *testing.T) {
 	}
 }
 
-func TestFFGORGBAFastAndPaddedCopies(t *testing.T) {
+func TestFFmpegRGBAFastAndPaddedCopies(t *testing.T) {
 	packed := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 	gotPacked := make([]byte, len(packed))
-	copyFFGORGBA(gotPacked, packed, 8, 8, 2)
+	copyFFmpegRGBA(gotPacked, packed, 8, 8, 2)
 	if !bytes.Equal(gotPacked, packed) {
 		t.Fatalf("packed RGBA copy = %v, want %v", gotPacked, packed)
 	}
@@ -63,13 +63,13 @@ func TestFFGORGBAFastAndPaddedCopies(t *testing.T) {
 		9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 0,
 	}
 	gotPadded := make([]byte, len(packed))
-	copyFFGORGBA(gotPadded, padded, 12, 8, 2)
+	copyFFmpegRGBA(gotPadded, padded, 12, 8, 2)
 	if !bytes.Equal(gotPadded, packed) {
 		t.Fatalf("padded RGBA copy = %v, want %v", gotPadded, packed)
 	}
 }
 
-func BenchmarkFFGORGBAReuse(b *testing.B) {
+func BenchmarkFFmpegRGBAReuse(b *testing.B) {
 	const width, height = 320, 180
 	size := width * height * 4
 	src := make([]byte, size)
@@ -80,7 +80,7 @@ func BenchmarkFFGORGBAReuse(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		dst := pool.get(size)
-		copyFFGORGBA(dst, src, width*4, width*4, height)
+		copyFFmpegRGBA(dst, src, width*4, width*4, height)
 		pool.put(dst)
 	}
 }
@@ -110,10 +110,10 @@ func TestBackendVideoBufferPoolReusesBuffer(t *testing.T) {
 	}
 }
 
-func TestFFGOStreamMovesPendingFrameBeforeRecyclingDisplayedFrame(t *testing.T) {
+func TestFFmpegStreamMovesPendingFrameBeforeRecyclingDisplayedFrame(t *testing.T) {
 	oldPixels := make([]byte, 16)
 	newPixels := make([]byte, 16)
-	controller := &ffgoStreamController{
+	controller := &ffiStreamController{
 		lastVideo:    &backendFrame{Kind: backendFrameVideo, Video: backendVideoFrame{RGBA: oldPixels}},
 		pendingVideo: &backendFrame{Kind: backendFrameVideo, Video: backendVideoFrame{RGBA: newPixels}},
 	}
@@ -138,11 +138,11 @@ func TestFFGOStreamMovesPendingFrameBeforeRecyclingDisplayedFrame(t *testing.T) 
 	}
 }
 
-func TestFFGOLocalResetRecyclesDisplayedAndQueuedFrames(t *testing.T) {
+func TestFFmpegLocalResetRecyclesDisplayedAndQueuedFrames(t *testing.T) {
 	firstPixels := make([]byte, 16)
 	secondPixels := make([]byte, 16)
 	thirdPixels := make([]byte, 16)
-	controller := &ffgoLocalController{
+	controller := &ffiLocalController{
 		lastVideo: &backendFrame{
 			Kind:  backendFrameVideo,
 			Video: backendVideoFrame{RGBA: firstPixels},
@@ -175,7 +175,7 @@ type fakeMediaDecoder struct {
 	closed    bool
 }
 
-type fakeFFGOAudioPlayer struct {
+type fakeFFmpegAudioPlayer struct {
 	playing  bool
 	closed   bool
 	position time.Duration
@@ -183,13 +183,13 @@ type fakeFFGOAudioPlayer struct {
 	buffer   time.Duration
 }
 
-func (p *fakeFFGOAudioPlayer) Play()                         { p.playing = true }
-func (p *fakeFFGOAudioPlayer) Pause()                        { p.playing = false }
-func (p *fakeFFGOAudioPlayer) IsPlaying() bool               { return p.playing }
-func (p *fakeFFGOAudioPlayer) Position() time.Duration       { return p.position }
-func (p *fakeFFGOAudioPlayer) SetBufferSize(v time.Duration) { p.buffer = v }
-func (p *fakeFFGOAudioPlayer) SetVolume(v float64)           { p.volume = v }
-func (p *fakeFFGOAudioPlayer) Close() error {
+func (p *fakeFFmpegAudioPlayer) Play()                         { p.playing = true }
+func (p *fakeFFmpegAudioPlayer) Pause()                        { p.playing = false }
+func (p *fakeFFmpegAudioPlayer) IsPlaying() bool               { return p.playing }
+func (p *fakeFFmpegAudioPlayer) Position() time.Duration       { return p.position }
+func (p *fakeFFmpegAudioPlayer) SetBufferSize(v time.Duration) { p.buffer = v }
+func (p *fakeFFmpegAudioPlayer) SetVolume(v float64)           { p.volume = v }
+func (p *fakeFFmpegAudioPlayer) Close() error {
 	p.closed = true
 	p.playing = false
 	return nil
@@ -217,12 +217,12 @@ func (d *fakeMediaDecoder) Close() error {
 	return nil
 }
 
-func TestFFGOHasEndedDoesNotReadAFrame(t *testing.T) {
+func TestFFmpegHasEndedDoesNotReadAFrame(t *testing.T) {
 	decoder := &fakeMediaDecoder{info: backendMediaInfo{
 		Duration: time.Second,
 		Video:    &backendVideoInfo{Width: 2, Height: 2, FrameRateNum: 25, FrameRateDen: 1},
 	}}
-	controller := newFFGOLocalController(decoder)
+	controller := newFFmpegLocalController(decoder)
 	if err := controller.Play(); err != nil {
 		t.Fatalf("Play: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestFFGOHasEndedDoesNotReadAFrame(t *testing.T) {
 	}
 }
 
-func TestFFGOStoppedControllerDoesNotDecode(t *testing.T) {
+func TestFFmpegStoppedControllerDoesNotDecode(t *testing.T) {
 	decoder := &fakeMediaDecoder{
 		info: backendMediaInfo{
 			Duration: time.Second,
@@ -247,7 +247,7 @@ func TestFFGOStoppedControllerDoesNotDecode(t *testing.T) {
 		},
 		frames: []backendFrame{{Kind: backendFrameVideo}},
 	}
-	controller := newFFGOLocalController(decoder)
+	controller := newFFmpegLocalController(decoder)
 
 	frame, ended, err := controller.CurrentVideoFrame()
 	if err != nil {
@@ -261,7 +261,7 @@ func TestFFGOStoppedControllerDoesNotDecode(t *testing.T) {
 	}
 }
 
-func TestFFGOSeekUsesOneContainerSeekAndPreservesPause(t *testing.T) {
+func TestFFmpegSeekUsesOneContainerSeekAndPreservesPause(t *testing.T) {
 	const target = 5 * time.Second
 	decoder := &fakeMediaDecoder{
 		info: backendMediaInfo{
@@ -275,7 +275,7 @@ func TestFFGOSeekUsesOneContainerSeekAndPreservesPause(t *testing.T) {
 			Video:    backendVideoFrame{RGBA: make([]byte, 16), Width: 2, Height: 2, Stride: 8},
 		}},
 	}
-	controller := newFFGOLocalController(decoder)
+	controller := newFFmpegLocalController(decoder)
 	controller.state = Paused
 
 	frame, err := controller.Seek(target)
@@ -297,13 +297,13 @@ func TestFFGOSeekUsesOneContainerSeekAndPreservesPause(t *testing.T) {
 	}
 }
 
-func TestFFGOSeekToEndAndManualStopHaveDifferentEndState(t *testing.T) {
+func TestFFmpegSeekToEndAndManualStopHaveDifferentEndState(t *testing.T) {
 	const duration = 10 * time.Second
 	decoder := &fakeMediaDecoder{info: backendMediaInfo{
 		Duration: duration,
 		Video:    &backendVideoInfo{Width: 2, Height: 2, FrameRateNum: 25, FrameRateDen: 1},
 	}}
-	controller := newFFGOLocalController(decoder)
+	controller := newFFmpegLocalController(decoder)
 
 	if _, err := controller.Seek(duration); err != nil {
 		t.Fatalf("Seek(end): %v", err)
@@ -319,20 +319,20 @@ func TestFFGOSeekToEndAndManualStopHaveDifferentEndState(t *testing.T) {
 	}
 }
 
-func TestFFGOAudioEOFWaitsForPlaybackAndCanReplay(t *testing.T) {
+func TestFFmpegAudioEOFWaitsForPlaybackAndCanReplay(t *testing.T) {
 	const duration = 3 * time.Second
 	decoder := &fakeMediaDecoder{info: backendMediaInfo{
 		Duration: duration,
 		Video:    &backendVideoInfo{Width: 2, Height: 2, FrameRateNum: 25, FrameRateDen: 1},
 		Audio:    &backendAudioInfo{SampleRate: 48_000, Channels: 2},
 	}}
-	oldPlayer := &fakeFFGOAudioPlayer{playing: true, position: 500 * time.Millisecond}
-	newPlayer := &fakeFFGOAudioPlayer{}
-	controller := newFFGOLocalController(decoder)
+	oldPlayer := &fakeFFmpegAudioPlayer{playing: true, position: 500 * time.Millisecond}
+	newPlayer := &fakeFFmpegAudioPlayer{}
+	controller := newFFmpegLocalController(decoder)
 	controller.state = Playing
 	controller.audioPlayer = oldPlayer
 	controller.waitingForAudioPTS = false
-	controller.newAudioPlayer = func(io.Reader) (ffgoAudioPlayer, error) {
+	controller.newAudioPlayer = func(io.Reader) (ffiAudioPlayer, error) {
 		return newPlayer, nil
 	}
 
@@ -374,22 +374,22 @@ func TestFFGOAudioEOFWaitsForPlaybackAndCanReplay(t *testing.T) {
 	}
 }
 
-func TestFFGOAudioLoopRestartsAfterPlaybackDrain(t *testing.T) {
+func TestFFmpegAudioLoopRestartsAfterPlaybackDrain(t *testing.T) {
 	const duration = 3 * time.Second
 	decoder := &fakeMediaDecoder{info: backendMediaInfo{
 		Duration: duration,
 		Video:    &backendVideoInfo{Width: 2, Height: 2, FrameRateNum: 25, FrameRateDen: 1},
 		Audio:    &backendAudioInfo{SampleRate: 48_000, Channels: 2},
 	}}
-	oldPlayer := &fakeFFGOAudioPlayer{position: duration}
-	newPlayer := &fakeFFGOAudioPlayer{}
-	controller := newFFGOLocalController(decoder)
+	oldPlayer := &fakeFFmpegAudioPlayer{position: duration}
+	newPlayer := &fakeFFmpegAudioPlayer{}
+	controller := newFFmpegLocalController(decoder)
 	controller.state = Playing
 	controller.looping = true
 	controller.audioEOF = true
 	controller.audioPlayer = oldPlayer
 	controller.waitingForAudioPTS = false
-	controller.newAudioPlayer = func(io.Reader) (ffgoAudioPlayer, error) {
+	controller.newAudioPlayer = func(io.Reader) (ffiAudioPlayer, error) {
 		return newPlayer, nil
 	}
 
@@ -408,8 +408,8 @@ func TestFFGOAudioLoopRestartsAfterPlaybackDrain(t *testing.T) {
 	}
 }
 
-func TestFFGOSeekFilterWaitsForAudioAndVideo(t *testing.T) {
-	decoder := &ffgoDecoder{
+func TestFFmpegSeekFilterWaitsForAudioAndVideo(t *testing.T) {
+	decoder := &ffiDecoder{
 		info: backendMediaInfo{
 			Video: &backendVideoInfo{},
 			Audio: &backendAudioInfo{},
@@ -471,10 +471,10 @@ func (d *eofMediaDecoder) Close() error {
 	return nil
 }
 
-func TestFFGOStreamDecodeErrorCleansSession(t *testing.T) {
+func TestFFmpegStreamDecodeErrorCleansSession(t *testing.T) {
 	backend := &eofMediaBackend{}
 	decoder := &eofMediaDecoder{closed: make(chan struct{})}
-	controller := newFFGOStreamController(backend, "stream", backendOpenOptions{}, backendMediaInfo{}, decoder)
+	controller := newFFmpegStreamController(backend, "stream", backendOpenOptions{}, backendMediaInfo{}, decoder)
 	if err := controller.Play(); err != nil {
 		t.Fatalf("Play: %v", err)
 	}

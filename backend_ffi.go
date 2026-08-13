@@ -11,19 +11,19 @@ import (
 	"sync"
 	"time"
 
-	ffgo "github.com/bstkhq/go-ffmpeg-ffi"
+	"github.com/bstkhq/go-ffmpeg-ffi"
 	"github.com/bstkhq/go-ffmpeg-ffi/avutil"
 )
 
-type ffgoBackend struct{}
+type ffiBackend struct{}
 
-var _ mediaBackend = ffgoBackend{}
-var _ mediaDecoder = (*ffgoDecoder)(nil)
+var _ mediaBackend = ffiBackend{}
+var _ mediaDecoder = (*ffiDecoder)(nil)
 
-func newMediaBackend() mediaBackend { return ffgoBackend{} }
+func newMediaBackend() mediaBackend { return ffiBackend{} }
 
-func (ffgoBackend) Probe(ctx context.Context, source string, opts backendOpenOptions) (backendMediaInfo, error) {
-	decoder, err := openFFGODecoder(ctx, source, opts)
+func (ffiBackend) Probe(ctx context.Context, source string, opts backendOpenOptions) (backendMediaInfo, error) {
+	decoder, err := openFFmpegDecoder(ctx, source, opts)
 	if err != nil {
 		return backendMediaInfo{}, err
 	}
@@ -31,25 +31,25 @@ func (ffgoBackend) Probe(ctx context.Context, source string, opts backendOpenOpt
 	return info, decoder.Close()
 }
 
-func (ffgoBackend) Open(ctx context.Context, source string, opts backendOpenOptions) (mediaDecoder, error) {
-	return openFFGODecoder(ctx, source, opts)
+func (ffiBackend) Open(ctx context.Context, source string, opts backendOpenOptions) (mediaDecoder, error) {
+	return openFFmpegDecoder(ctx, source, opts)
 }
 
-type ffgoDecoder struct {
+type ffiDecoder struct {
 	mutex sync.Mutex
 
-	decoder *ffgo.Decoder
+	decoder *ffmpeg.Decoder
 	info    backendMediaInfo
 
 	outputSampleRate  int
-	scaler            *ffgo.Scaler
+	scaler            *ffmpeg.Scaler
 	scalerWidth       int
 	scalerHeight      int
-	scalerFormat      ffgo.PixelFormat
-	resampler         *ffgo.Resampler
+	scalerFormat      ffmpeg.PixelFormat
+	resampler         *ffmpeg.Resampler
 	resamplerRate     int
 	resamplerChannels int
-	resamplerFormat   ffgo.SampleFormat
+	resamplerFormat   ffmpeg.SampleFormat
 
 	seeking        bool
 	seekTarget     time.Duration
@@ -58,17 +58,17 @@ type ffgoDecoder struct {
 	closed         bool
 }
 
-func openFFGODecoder(ctx context.Context, source string, opts backendOpenOptions) (*ffgoDecoder, error) {
+func openFFmpegDecoder(ctx context.Context, source string, opts backendOpenOptions) (*ffiDecoder, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := ffgo.Init(); err != nil {
-		return nil, fmt.Errorf("initialize ffgo: %w", err)
+	if err := ffmpeg.Init(); err != nil {
+		return nil, fmt.Errorf("initialize go-ffmpeg-ffi: %w", err)
 	}
 
-	decoderOpts := &ffgo.DecoderOptions{}
+	decoderOpts := &ffmpeg.DecoderOptions{}
 	if opts.DisableAudio {
-		decoderOpts.Streams = []ffgo.MediaType{ffgo.MediaTypeVideo}
+		decoderOpts.Streams = []ffmpeg.MediaType{ffmpeg.MediaTypeVideo}
 	}
 	if opts.Live {
 		decoderOpts.AVOptions = make(map[string]string)
@@ -82,12 +82,12 @@ func openFFGODecoder(ctx context.Context, source string, opts backendOpenOptions
 		}
 	}
 
-	decoder, err := ffgo.NewDecoder(source, decoderOpts)
+	decoder, err := ffmpeg.NewDecoder(source, decoderOpts)
 	if err != nil {
 		return nil, err
 	}
 
-	info := mediaInfoFromFFGO(decoder)
+	info := mediaInfoFromFFmpeg(decoder)
 	if info.Video == nil || info.Video.Width <= 0 || info.Video.Height <= 0 {
 		_ = decoder.Close()
 		return nil, ErrNoVideo
@@ -98,14 +98,14 @@ func openFFGODecoder(ctx context.Context, source string, opts backendOpenOptions
 		outputSampleRate = info.Audio.SampleRate
 	}
 
-	return &ffgoDecoder{
+	return &ffiDecoder{
 		decoder:          decoder,
 		info:             info,
 		outputSampleRate: outputSampleRate,
 	}, nil
 }
 
-func mediaInfoFromFFGO(decoder *ffgo.Decoder) backendMediaInfo {
+func mediaInfoFromFFmpeg(decoder *ffmpeg.Decoder) backendMediaInfo {
 	info := backendMediaInfo{Duration: decoder.Duration()}
 	if stream := decoder.VideoStream(); stream != nil {
 		info.Video = &backendVideoInfo{
@@ -124,14 +124,14 @@ func mediaInfoFromFFGO(decoder *ffgo.Decoder) backendMediaInfo {
 	return info
 }
 
-func (d *ffgoDecoder) Info() backendMediaInfo { return d.info }
+func (d *ffiDecoder) Info() backendMediaInfo { return d.info }
 
-func (d *ffgoDecoder) ReadFrame(ctx context.Context, videoBuffers *backendVideoBufferPool) (backendFrame, error) {
+func (d *ffiDecoder) ReadFrame(ctx context.Context, videoBuffers *backendVideoBufferPool) (backendFrame, error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 
 	if d.closed {
-		return backendFrame{}, errors.New("avebi: ffgo decoder is closed")
+		return backendFrame{}, errors.New("avebi: FFmpeg decoder is closed")
 	}
 
 	for {
@@ -160,18 +160,18 @@ func (d *ffgoDecoder) ReadFrame(ctx context.Context, videoBuffers *backendVideoB
 }
 
 // The *Locked helpers below require d.mutex to be held by the caller.
-func (d *ffgoDecoder) convertFrameLocked(frame *ffgo.FrameWrapper, videoBuffers *backendVideoBufferPool) (backendFrame, bool, error) {
+func (d *ffiDecoder) convertFrameLocked(frame *ffmpeg.FrameWrapper, videoBuffers *backendVideoBufferPool) (backendFrame, bool, error) {
 	switch frame.MediaType() {
-	case ffgo.MediaTypeVideo:
+	case ffmpeg.MediaTypeVideo:
 		return d.convertVideoFrameLocked(frame, videoBuffers)
-	case ffgo.MediaTypeAudio:
+	case ffmpeg.MediaTypeAudio:
 		return d.convertAudioFrameLocked(frame)
 	default:
 		return backendFrame{}, false, nil
 	}
 }
 
-func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper, videoBuffers *backendVideoBufferPool) (backendFrame, bool, error) {
+func (d *ffiDecoder) convertVideoFrameLocked(frame *ffmpeg.FrameWrapper, videoBuffers *backendVideoBufferPool) (backendFrame, bool, error) {
 	width, height := frame.Width(), frame.Height()
 	if width <= 0 || height <= 0 {
 		width, height = d.info.Video.Width, d.info.Video.Height
@@ -183,10 +183,10 @@ func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper, videoBuf
 		}
 		// Source and destination dimensions intentionally match: swscale is used
 		// for pixel-format and YUV-to-RGB conversion, not geometric resizing. We
-		// keep ffgo's bilinear default, but FFmpeg does not clearly specify how the
+		// keep go-ffmpeg-ffi's bilinear default, but FFmpeg does not clearly specify how the
 		// choice affects chroma handling on this unscaled conversion, and avebi does
 		// not rely on a particular effect.
-		scaler, err := ffgo.NewScaler(width, height, sourceFormat, width, height, ffgo.PixelFormatRGBA, ffgo.ScaleBilinear)
+		scaler, err := ffmpeg.NewScaler(width, height, sourceFormat, width, height, ffmpeg.PixelFormatRGBA, ffmpeg.ScaleBilinear)
 		if err != nil {
 			return backendFrame{}, false, err
 		}
@@ -201,23 +201,23 @@ func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper, videoBuf
 		return backendFrame{}, false, err
 	}
 	// Scale returns a scaler-owned raw frame that is overwritten by the next
-	// call. WrapFrame exposes its data pointer and stride; copyFFGORGBA detaches
+	// call. WrapFrame exposes its data pointer and stride; copyFFmpegRGBA detaches
 	// it into reusable, tightly packed storage for ebiten.Image.WritePixels.
-	wrapped := ffgo.WrapFrame(scaled, ffgo.MediaTypeVideo)
+	wrapped := ffmpeg.WrapFrame(scaled, ffmpeg.MediaTypeVideo)
 	stride := wrapped.Linesize(0)
 	rowSize := width * 4
 	if stride < rowSize {
-		return backendFrame{}, false, fmt.Errorf("avebi: ffgo returned RGBA stride %d for row size %d", stride, rowSize)
+		return backendFrame{}, false, fmt.Errorf("avebi: go-ffmpeg-ffi returned RGBA stride %d for row size %d", stride, rowSize)
 	}
 	data := wrapped.Data(0)
 	if len(data) < stride*height {
-		return backendFrame{}, false, fmt.Errorf("avebi: ffgo returned a truncated RGBA frame")
+		return backendFrame{}, false, fmt.Errorf("avebi: go-ffmpeg-ffi returned a truncated RGBA frame")
 	}
 
 	rgba := videoBuffers.get(rowSize * height)
-	copyFFGORGBA(rgba, data, stride, rowSize, height)
+	copyFFmpegRGBA(rgba, data, stride, rowSize, height)
 
-	pts := ffgoPTS(frame.PTS(), d.decoder.VideoStream().TimeBase)
+	pts := ffmpegPTS(frame.PTS(), d.decoder.VideoStream().TimeBase)
 	duration := d.info.Video.FrameDuration()
 	return backendFrame{
 		Kind:     backendFrameVideo,
@@ -232,7 +232,7 @@ func (d *ffgoDecoder) convertVideoFrameLocked(frame *ffgo.FrameWrapper, videoBuf
 	}, true, nil
 }
 
-func copyFFGORGBA(dst, src []byte, stride, rowSize, height int) {
+func copyFFmpegRGBA(dst, src []byte, stride, rowSize, height int) {
 	if stride == rowSize {
 		copy(dst, src[:len(dst)])
 		return
@@ -242,7 +242,7 @@ func copyFFGORGBA(dst, src []byte, stride, rowSize, height int) {
 	}
 }
 
-func (d *ffgoDecoder) convertAudioFrameLocked(frame *ffgo.FrameWrapper) (backendFrame, bool, error) {
+func (d *ffiDecoder) convertAudioFrameLocked(frame *ffmpeg.FrameWrapper) (backendFrame, bool, error) {
 	if d.info.Audio == nil || d.outputSampleRate <= 0 {
 		return backendFrame{}, false, nil
 	}
@@ -253,7 +253,7 @@ func (d *ffgoDecoder) convertAudioFrameLocked(frame *ffgo.FrameWrapper) (backend
 	}
 	channels := d.info.Audio.Channels
 	if sampleRate <= 0 || channels <= 0 {
-		return backendFrame{}, false, fmt.Errorf("avebi: invalid ffgo audio format %d Hz/%d channels", sampleRate, channels)
+		return backendFrame{}, false, fmt.Errorf("avebi: invalid FFmpeg audio format %d Hz/%d channels", sampleRate, channels)
 	}
 	sampleFormat := frame.SampleFormat()
 	if d.resampler == nil || d.resamplerRate != sampleRate || d.resamplerChannels != channels || d.resamplerFormat != sampleFormat {
@@ -264,9 +264,9 @@ func (d *ffgoDecoder) convertAudioFrameLocked(frame *ffgo.FrameWrapper) (backend
 		// this media (notably after another player created the audio context), and
 		// decoded FFmpeg audio is commonly planar or non-S16. Normalize every
 		// source to packed stereo S16 at the active context's sample rate.
-		resampler, err := ffgo.NewResampler(
-			ffgo.AudioFormat{SampleRate: sampleRate, Channels: channels, SampleFormat: sampleFormat},
-			ffgo.AudioFormat{SampleRate: d.outputSampleRate, Channels: 2, ChannelLayout: ffgo.ChannelLayoutStereo, SampleFormat: ffgo.SampleFormatS16},
+		resampler, err := ffmpeg.NewResampler(
+			ffmpeg.AudioFormat{SampleRate: sampleRate, Channels: channels, SampleFormat: sampleFormat},
+			ffmpeg.AudioFormat{SampleRate: d.outputSampleRate, Channels: 2, ChannelLayout: ffmpeg.ChannelLayoutStereo, SampleFormat: ffmpeg.SampleFormatS16},
 		)
 		if err != nil {
 			return backendFrame{}, false, err
@@ -286,7 +286,7 @@ func (d *ffgoDecoder) convertAudioFrameLocked(frame *ffgo.FrameWrapper) (backend
 	}
 	defer resampled.Free()
 
-	wrapped := ffgo.WrapFrame(resampled, ffgo.MediaTypeAudio)
+	wrapped := ffmpeg.WrapFrame(resampled, ffmpeg.MediaTypeAudio)
 	samples := wrapped.NumSamples()
 	if samples <= 0 {
 		return backendFrame{}, false, nil
@@ -294,11 +294,11 @@ func (d *ffgoDecoder) convertAudioFrameLocked(frame *ffgo.FrameWrapper) (backend
 	expectedBytes := samples * 2 * 2
 	data := wrapped.Data(0)
 	if len(data) < expectedBytes {
-		return backendFrame{}, false, fmt.Errorf("avebi: ffgo returned %d audio bytes, expected at least %d", len(data), expectedBytes)
+		return backendFrame{}, false, fmt.Errorf("avebi: go-ffmpeg-ffi returned %d audio bytes, expected at least %d", len(data), expectedBytes)
 	}
 	pcm := append([]byte(nil), data[:expectedBytes]...)
 
-	pts := ffgoPTS(frame.PTS(), d.decoder.AudioStream().TimeBase)
+	pts := ffmpegPTS(frame.PTS(), d.decoder.AudioStream().TimeBase)
 	duration := time.Second * time.Duration(samples) / time.Duration(d.outputSampleRate)
 	return backendFrame{
 		Kind:     backendFrameAudio,
@@ -312,7 +312,7 @@ func (d *ffgoDecoder) convertAudioFrameLocked(frame *ffgo.FrameWrapper) (backend
 	}, true, nil
 }
 
-func ffgoPTS(pts int64, timeBase ffgo.Rational) time.Duration {
+func ffmpegPTS(pts int64, timeBase ffmpeg.Rational) time.Duration {
 	if pts == avutil.AV_NOPTS_VALUE || timeBase.Num <= 0 || timeBase.Den <= 0 {
 		return 0
 	}
@@ -320,7 +320,7 @@ func ffgoPTS(pts int64, timeBase ffgo.Rational) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
-func (d *ffgoDecoder) acceptSeekFrameLocked(frame backendFrame) bool {
+func (d *ffiDecoder) acceptSeekFrameLocked(frame backendFrame) bool {
 	if !d.seeking {
 		return true
 	}
@@ -351,12 +351,12 @@ func (d *ffgoDecoder) acceptSeekFrameLocked(frame backendFrame) bool {
 	return ready
 }
 
-func (d *ffgoDecoder) Seek(position time.Duration) error {
+func (d *ffiDecoder) Seek(position time.Duration) error {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 
 	if d.closed {
-		return errors.New("avebi: ffgo decoder is closed")
+		return errors.New("avebi: FFmpeg decoder is closed")
 	}
 	position = max(position, 0)
 	if d.info.Duration > 0 {
@@ -378,7 +378,7 @@ func (d *ffgoDecoder) Seek(position time.Duration) error {
 	return nil
 }
 
-func (d *ffgoDecoder) Close() error {
+func (d *ffiDecoder) Close() error {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 

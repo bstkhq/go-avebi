@@ -85,7 +85,7 @@ type backendVideoFrame struct {
 
 const maxPooledVideoBuffers = 8
 
-// backendVideoBufferPool keeps decoded RGBA storage independent from ffgo's
+// backendVideoBufferPool keeps decoded RGBA storage independent from the native
 // scaler-owned frame, which is overwritten by the next Scale call.
 type backendVideoBufferPool struct {
 	mutex   sync.Mutex

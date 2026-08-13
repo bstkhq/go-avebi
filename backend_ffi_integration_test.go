@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	ffgo "github.com/bstkhq/go-ffmpeg-ffi"
+	"github.com/bstkhq/go-ffmpeg-ffi"
 )
 
 const expectedFFmpegMajorEnv = "AVEBI_EXPECT_FFMPEG_MAJOR"
 
-func TestFFGORuntimeMajor(t *testing.T) {
+func TestFFmpegRuntimeMajor(t *testing.T) {
 	value := os.Getenv(expectedFFmpegMajorEnv)
 	if value == "" {
 		t.Skip("set AVEBI_EXPECT_FFMPEG_MAJOR to verify the loaded FFmpeg ABI")
@@ -32,10 +32,10 @@ func TestFFGORuntimeMajor(t *testing.T) {
 	if !ok {
 		t.Fatalf("unsupported expected FFmpeg release %d", release)
 	}
-	if err := ffgo.Init(); err != nil {
-		t.Fatalf("initialize ffgo: %v", err)
+	if err := ffmpeg.Init(); err != nil {
+		t.Fatalf("initialize go-ffmpeg-ffi: %v", err)
 	}
-	avutilVersion, avcodecVersion, avformatVersion := ffgo.Version()
+	avutilVersion, avcodecVersion, avformatVersion := ffmpeg.Version()
 	got := [3]int{
 		int(avutilVersion >> 16),
 		int(avcodecVersion >> 16),
@@ -47,14 +47,14 @@ func TestFFGORuntimeMajor(t *testing.T) {
 	}
 }
 
-// TestFFGOBackendMedia exercises ffgo against a real media file. It is opt-in
+// TestFFmpegBackendMedia exercises go-ffmpeg-ffi against a real media file. It is opt-in
 // so the normal test suite stays hermetic:
 //
-//	AVEBI_TEST_MEDIA=/path/to/video.mp4 go test -run TestFFGOBackendMedia
-func TestFFGOBackendMedia(t *testing.T) {
+//	AVEBI_TEST_MEDIA=/path/to/video.mp4 go test -run TestFFmpegBackendMedia
+func TestFFmpegBackendMedia(t *testing.T) {
 	mediaPath := os.Getenv("AVEBI_TEST_MEDIA")
 	if mediaPath == "" {
-		t.Skip("set AVEBI_TEST_MEDIA to run the ffgo integration test")
+		t.Skip("set AVEBI_TEST_MEDIA to run the FFmpeg integration test")
 	}
 
 	decoder, err := newMediaBackend().Open(context.Background(), mediaPath, backendOpenOptions{
@@ -78,7 +78,7 @@ func TestFFGOBackendMedia(t *testing.T) {
 	}
 
 	wantAudio := info.Audio != nil
-	gotVideo, gotAudio := readAndValidateFFGOFrames(t, decoder, wantAudio)
+	gotVideo, gotAudio := readAndValidateFFmpegFrames(t, decoder, wantAudio)
 	if !gotVideo {
 		t.Fatal("no video frame decoded")
 	}
@@ -90,13 +90,13 @@ func TestFFGOBackendMedia(t *testing.T) {
 	if err := decoder.Seek(seekTarget); err != nil {
 		t.Fatalf("seek to %s: %v", seekTarget, err)
 	}
-	validateFFGOSeek(t, decoder, seekTarget, wantAudio)
+	validateFFmpegSeek(t, decoder, seekTarget, wantAudio)
 }
 
-func TestFFGOPlayerWithDisabledAudioMedia(t *testing.T) {
+func TestFFmpegPlayerWithDisabledAudioMedia(t *testing.T) {
 	mediaPath := os.Getenv("AVEBI_TEST_MEDIA")
 	if mediaPath == "" {
-		t.Skip("set AVEBI_TEST_MEDIA to run the ffgo integration test")
+		t.Skip("set AVEBI_TEST_MEDIA to run the FFmpeg integration test")
 	}
 
 	player, err := NewPlayerWithOptions(mediaPath, &PlayerOptions{DisableAudio: true})
@@ -150,16 +150,16 @@ func TestFFGOPlayerWithDisabledAudioMedia(t *testing.T) {
 	}
 }
 
-// TestFFGOPlayerWithAudioMedia exercises the public audio controller and needs
+// TestFFmpegPlayerWithAudioMedia exercises the public audio controller and needs
 // a working, real-time audio sink. It is separately gated so decoder-only CI
 // can still use AVEBI_TEST_MEDIA without configuring ALSA/PipeWire:
 //
 //	AVEBI_TEST_MEDIA=/path/to/video-with-audio.mp4 AVEBI_TEST_AUDIO=1 \
-//	  go test -run TestFFGOPlayerWithAudioMedia
-func TestFFGOPlayerWithAudioMedia(t *testing.T) {
+//	  go test -run TestFFmpegPlayerWithAudioMedia
+func TestFFmpegPlayerWithAudioMedia(t *testing.T) {
 	mediaPath := os.Getenv("AVEBI_TEST_MEDIA")
 	if mediaPath == "" || os.Getenv("AVEBI_TEST_AUDIO") != "1" {
-		t.Skip("set AVEBI_TEST_MEDIA and AVEBI_TEST_AUDIO=1 to run the ffgo audio-player integration test")
+		t.Skip("set AVEBI_TEST_MEDIA and AVEBI_TEST_AUDIO=1 to run the FFmpeg audio-player integration test")
 	}
 
 	if err := CreateAudioContextForMedia(mediaPath); err != nil && !errors.Is(err, ErrNonNilAudioContext) {
@@ -181,7 +181,7 @@ func TestFFGOPlayerWithAudioMedia(t *testing.T) {
 	if err := player.Play(); err != nil {
 		t.Fatalf("Play: %v", err)
 	}
-	waitForFFGOPlayerPosition(t, player, 100*time.Millisecond, player.Duration())
+	waitForFFmpegPlayerPosition(t, player, 100*time.Millisecond, player.Duration())
 	if err := player.Pause(); err != nil {
 		t.Fatalf("Pause: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestFFGOPlayerWithAudioMedia(t *testing.T) {
 	if err := player.Play(); err != nil {
 		t.Fatalf("replay: %v", err)
 	}
-	waitForFFGOPlayerPosition(t, player, 100*time.Millisecond, player.Duration())
+	waitForFFmpegPlayerPosition(t, player, 100*time.Millisecond, player.Duration())
 	if player.HasEnded() {
 		t.Fatal("replay remained in the ended state")
 	}
@@ -232,7 +232,7 @@ func TestFFGOPlayerWithAudioMedia(t *testing.T) {
 	}
 }
 
-func waitForFFGOPlayerPosition(t *testing.T, player *Player, minimum, maximum time.Duration) {
+func waitForFFmpegPlayerPosition(t *testing.T, player *Player, minimum, maximum time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -253,7 +253,7 @@ func waitForFFGOPlayerPosition(t *testing.T, player *Player, minimum, maximum ti
 	}
 }
 
-func readAndValidateFFGOFrames(t *testing.T, decoder mediaDecoder, wantAudio bool) (bool, bool) {
+func readAndValidateFFmpegFrames(t *testing.T, decoder mediaDecoder, wantAudio bool) (bool, bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	var gotVideo, gotAudio bool
@@ -284,7 +284,7 @@ func readAndValidateFFGOFrames(t *testing.T, decoder mediaDecoder, wantAudio boo
 	return gotVideo, gotAudio
 }
 
-func validateFFGOSeek(t *testing.T, decoder mediaDecoder, target time.Duration, wantAudio bool) {
+func validateFFmpegSeek(t *testing.T, decoder mediaDecoder, target time.Duration, wantAudio bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	var gotVideo, gotAudio bool

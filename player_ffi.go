@@ -20,7 +20,7 @@ var (
 	ErrTooManyChannels = errors.New("file audio streams with more than 2 channels are not supported")
 )
 
-// Player is a video player backed by ffgo.
+// Player is a video player backed by go-ffmpeg-ffi.
 type Player struct {
 	controller        playbackController
 	currentFrame      *ebiten.Image
@@ -49,7 +49,7 @@ func NewPlayerWithOptions(videoFilename string, options *PlayerOptions) (*Player
 	if options == nil {
 		options = &PlayerOptions{}
 	}
-	return newFFGOPlayer(videoFilename, options.DisableAudio, options, nil)
+	return newFFmpegPlayer(videoFilename, options.DisableAudio, options, nil)
 }
 
 func NewStreamPlayer(videoFilename string) (*Player, error) {
@@ -68,10 +68,10 @@ func NewStreamPlayerWithOptions(videoFilename string, options *StreamOptions) (*
 	if options.ReadTimeout == 0 {
 		options.ReadTimeout = 200 * time.Millisecond
 	}
-	return newFFGOPlayer(videoFilename, true, nil, options)
+	return newFFmpegPlayer(videoFilename, true, nil, options)
 }
 
-func newFFGOPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptions, streamOptions *StreamOptions) (*Player, error) {
+func newFFmpegPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptions, streamOptions *StreamOptions) (*Player, error) {
 	backend := newMediaBackend()
 	opts := backendOpenOptions{DisableAudio: ignoreAudio}
 	if ctx := audio.CurrentContext(); ctx != nil {
@@ -92,7 +92,7 @@ func newFFGOPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptions
 			return nil, err
 		}
 		info = decoder.Info()
-		controller = newFFGOStreamController(backend, source, opts, info, decoder)
+		controller = newFFmpegStreamController(backend, source, opts, info, decoder)
 	} else {
 		decoder, err := backend.Open(context.Background(), source, opts)
 		if err != nil {
@@ -109,7 +109,7 @@ func newFFGOPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptions
 				return nil, err
 			}
 		}
-		controller = newFFGOLocalController(decoder)
+		controller = newFFmpegLocalController(decoder)
 	}
 
 	if info.Video == nil || info.Video.Width <= 0 || info.Video.Height <= 0 {

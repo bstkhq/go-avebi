@@ -13,9 +13,9 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/audio"
 )
 
-const ffgoPlayerBufferSize = 200 * time.Millisecond
+const ffiPlayerBufferSize = 200 * time.Millisecond
 
-type ffgoAudioPlayer interface {
+type ffiAudioPlayer interface {
 	Play()
 	Pause()
 	IsPlaying() bool
@@ -25,7 +25,7 @@ type ffgoAudioPlayer interface {
 	Close() error
 }
 
-type ffgoAudioPlayerFactory func(io.Reader) (ffgoAudioPlayer, error)
+type ffiAudioPlayerFactory func(io.Reader) (ffiAudioPlayer, error)
 
 type playbackController interface {
 	State() (PlaybackState, error)
@@ -48,9 +48,9 @@ type playbackController interface {
 	Error() error
 }
 
-var _ playbackController = (*ffgoLocalController)(nil)
+var _ playbackController = (*ffiLocalController)(nil)
 
-type ffgoLocalController struct {
+type ffiLocalController struct {
 	mutex   sync.Mutex
 	decoder mediaDecoder
 	info    backendMediaInfo
@@ -70,8 +70,8 @@ type ffgoLocalController struct {
 	audioQueue   []byte
 
 	hasAudio           bool
-	audioPlayer        ffgoAudioPlayer
-	newAudioPlayer     ffgoAudioPlayerFactory
+	audioPlayer        ffiAudioPlayer
+	newAudioPlayer     ffiAudioPlayerFactory
 	audioEOF           bool
 	firstAudioPTS      time.Duration
 	waitingForAudioPTS bool
@@ -81,9 +81,9 @@ type ffgoLocalController struct {
 	decodeErr error
 }
 
-func newFFGOLocalController(decoder mediaDecoder) *ffgoLocalController {
+func newFFmpegLocalController(decoder mediaDecoder) *ffiLocalController {
 	info := decoder.Info()
-	return &ffgoLocalController{
+	return &ffiLocalController{
 		decoder:            decoder,
 		info:               info,
 		state:              Stopped,
@@ -96,7 +96,7 @@ func newFFGOLocalController(decoder mediaDecoder) *ffgoLocalController {
 	}
 }
 
-func (c *ffgoLocalController) State() (PlaybackState, error) {
+func (c *ffiLocalController) State() (PlaybackState, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if _, err := c.noLockPosition(time.Now()); err != nil {
@@ -105,7 +105,7 @@ func (c *ffgoLocalController) State() (PlaybackState, error) {
 	return c.state, nil
 }
 
-func (c *ffgoLocalController) Play() error {
+func (c *ffiLocalController) Play() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.closed {
@@ -140,7 +140,7 @@ func (c *ffgoLocalController) Play() error {
 	return nil
 }
 
-func (c *ffgoLocalController) Pause() error {
+func (c *ffiLocalController) Pause() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.state != Playing {
@@ -163,7 +163,7 @@ func (c *ffgoLocalController) Pause() error {
 	return nil
 }
 
-func (c *ffgoLocalController) Stop() error {
+func (c *ffiLocalController) Stop() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.closed {
@@ -180,7 +180,7 @@ func (c *ffgoLocalController) Stop() error {
 	return nil
 }
 
-func (c *ffgoLocalController) Close() error {
+func (c *ffiLocalController) Close() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.closed {
@@ -194,7 +194,7 @@ func (c *ffgoLocalController) Close() error {
 	return errors.Join(playerErr, decoderErr)
 }
 
-func (c *ffgoLocalController) Seek(position time.Duration) (*backendFrame, error) {
+func (c *ffiLocalController) Seek(position time.Duration) (*backendFrame, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.closed {
@@ -257,7 +257,7 @@ func (c *ffgoLocalController) Seek(position time.Duration) (*backendFrame, error
 // noLockPrimeAfterSeek buffers accepted audio until the first accepted video
 // frame. The decoder's Seek contract has already filtered both streams to the
 // requested target.
-func (c *ffgoLocalController) noLockPrimeAfterSeek() (*backendFrame, error) {
+func (c *ffiLocalController) noLockPrimeAfterSeek() (*backendFrame, error) {
 	for {
 		frame, err := c.decoder.ReadFrame(context.Background(), &c.videoBuffers)
 		if err != nil {
@@ -282,13 +282,13 @@ func (c *ffgoLocalController) noLockPrimeAfterSeek() (*backendFrame, error) {
 	}
 }
 
-func (c *ffgoLocalController) Position() (time.Duration, error) {
+func (c *ffiLocalController) Position() (time.Duration, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	return c.noLockPosition(time.Now())
 }
 
-func (c *ffgoLocalController) noLockPosition(now time.Time) (time.Duration, error) {
+func (c *ffiLocalController) noLockPosition(now time.Time) (time.Duration, error) {
 	if c.ended {
 		return c.info.Duration, nil
 	}
@@ -354,21 +354,21 @@ func (c *ffgoLocalController) noLockPosition(now time.Time) (time.Duration, erro
 	return c.info.Duration, nil
 }
 
-func (c *ffgoLocalController) Duration() time.Duration { return c.info.Duration }
+func (c *ffiLocalController) Duration() time.Duration { return c.info.Duration }
 
-func (c *ffgoLocalController) SetLooping(looping bool) {
+func (c *ffiLocalController) SetLooping(looping bool) {
 	c.mutex.Lock()
 	c.looping = looping
 	c.mutex.Unlock()
 }
 
-func (c *ffgoLocalController) GetLooping() bool {
+func (c *ffiLocalController) GetLooping() bool {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	return c.looping
 }
 
-func (c *ffgoLocalController) HasEnded() bool {
+func (c *ffiLocalController) HasEnded() bool {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if !c.ended && !c.looping {
@@ -379,15 +379,15 @@ func (c *ffgoLocalController) HasEnded() bool {
 	return c.ended && !c.looping
 }
 
-func (c *ffgoLocalController) HasAudio() bool { return c.hasAudio }
+func (c *ffiLocalController) HasAudio() bool { return c.hasAudio }
 
-func (c *ffgoLocalController) GetVolume() float64 {
+func (c *ffiLocalController) GetVolume() float64 {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	return c.volume
 }
 
-func (c *ffgoLocalController) SetVolume(volume float64) {
+func (c *ffiLocalController) SetVolume(volume float64) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.volume = volume
@@ -396,13 +396,13 @@ func (c *ffgoLocalController) SetVolume(volume float64) {
 	}
 }
 
-func (c *ffgoLocalController) GetMuted() bool {
+func (c *ffiLocalController) GetMuted() bool {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	return c.muted
 }
 
-func (c *ffgoLocalController) SetMuted(muted bool) {
+func (c *ffiLocalController) SetMuted(muted bool) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.muted = muted
@@ -411,14 +411,14 @@ func (c *ffgoLocalController) SetMuted(muted bool) {
 	}
 }
 
-func (c *ffgoLocalController) noLockEffectiveVolume() float64 {
+func (c *ffiLocalController) noLockEffectiveVolume() float64 {
 	if c.muted {
 		return 0
 	}
 	return c.volume
 }
 
-func (c *ffgoLocalController) CurrentVideoFrame() (*backendFrame, bool, error) {
+func (c *ffiLocalController) CurrentVideoFrame() (*backendFrame, bool, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.state == Stopped {
@@ -466,7 +466,7 @@ func (c *ffgoLocalController) CurrentVideoFrame() (*backendFrame, bool, error) {
 	return c.lastVideo, false, nil
 }
 
-func (c *ffgoLocalController) noLockConsumeVideoQueue(position time.Duration) {
+func (c *ffiLocalController) noLockConsumeVideoQueue(position time.Duration) {
 	consumed := 0
 	for consumed < len(c.videoQueue) {
 		frame := &c.videoQueue[consumed]
@@ -485,13 +485,13 @@ func (c *ffgoLocalController) noLockConsumeVideoQueue(position time.Duration) {
 	}
 }
 
-func (c *ffgoLocalController) noLockReplaceLastVideo(frame backendFrame) {
+func (c *ffiLocalController) noLockReplaceLastVideo(frame backendFrame) {
 	recycleBackendFrame(&c.videoBuffers, c.lastVideo)
 	copyFrame := frame
 	c.lastVideo = &copyFrame
 }
 
-func (c *ffgoLocalController) noLockRecycleVideoFrames() {
+func (c *ffiLocalController) noLockRecycleVideoFrames() {
 	recycleBackendFrame(&c.videoBuffers, c.lastVideo)
 	c.lastVideo = nil
 	for i := range c.videoQueue {
@@ -500,20 +500,20 @@ func (c *ffgoLocalController) noLockRecycleVideoFrames() {
 	c.videoQueue = c.videoQueue[:0]
 }
 
-func (c *ffgoLocalController) frameDuration() time.Duration {
+func (c *ffiLocalController) frameDuration() time.Duration {
 	if c.info.Video == nil {
 		return 0
 	}
 	return c.info.Video.FrameDuration()
 }
 
-func (c *ffgoLocalController) Error() error {
+func (c *ffiLocalController) Error() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	return c.decodeErr
 }
 
-func (c *ffgoLocalController) Read(buffer []byte) (int, error) {
+func (c *ffiLocalController) Read(buffer []byte) (int, error) {
 	if len(buffer)&3 != 0 {
 		buffer = buffer[:len(buffer)&(math.MaxInt-3)]
 	}
@@ -558,7 +558,7 @@ func (c *ffgoLocalController) Read(buffer []byte) (int, error) {
 	return served, nil
 }
 
-func (c *ffgoLocalController) noLockCopyAudio(buffer []byte) int {
+func (c *ffiLocalController) noLockCopyAudio(buffer []byte) int {
 	copied := copy(buffer, c.audioQueue)
 	if copied == len(c.audioQueue) {
 		c.audioQueue = c.audioQueue[:0]
@@ -569,7 +569,7 @@ func (c *ffgoLocalController) noLockCopyAudio(buffer []byte) int {
 	return copied
 }
 
-func (c *ffgoLocalController) noLockCreateAudioPlayer() error {
+func (c *ffiLocalController) noLockCreateAudioPlayer() error {
 	factory := c.newAudioPlayer
 	if factory == nil {
 		factory = newEbitengineAudioPlayer
@@ -578,14 +578,14 @@ func (c *ffgoLocalController) noLockCreateAudioPlayer() error {
 	if err != nil {
 		return err
 	}
-	player.SetBufferSize(ffgoPlayerBufferSize)
+	player.SetBufferSize(ffiPlayerBufferSize)
 	player.SetVolume(c.noLockEffectiveVolume())
 	c.audioPlayer = player
 	c.waitingForAudioPTS = len(c.audioQueue) == 0
 	return nil
 }
 
-func newEbitengineAudioPlayer(source io.Reader) (ffgoAudioPlayer, error) {
+func newEbitengineAudioPlayer(source io.Reader) (ffiAudioPlayer, error) {
 	ctx := audio.CurrentContext()
 	if ctx == nil {
 		return nil, ErrNilAudioContext
@@ -593,7 +593,7 @@ func newEbitengineAudioPlayer(source io.Reader) (ffgoAudioPlayer, error) {
 	return ctx.NewPlayer(source)
 }
 
-func (c *ffgoLocalController) noLockCloseAudioPlayer() error {
+func (c *ffiLocalController) noLockCloseAudioPlayer() error {
 	if c.audioPlayer == nil {
 		return nil
 	}
@@ -604,7 +604,7 @@ func (c *ffgoLocalController) noLockCloseAudioPlayer() error {
 	return err
 }
 
-func (c *ffgoLocalController) noLockResetPlayback(position time.Duration) {
+func (c *ffiLocalController) noLockResetPlayback(position time.Duration) {
 	c.noLockRecycleVideoFrames()
 	c.audioQueue = c.audioQueue[:0]
 	c.firstAudioPTS = position
