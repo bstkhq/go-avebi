@@ -233,8 +233,9 @@ func runMCPControlIntegration(t *testing.T, driver *ebitenmcp.Driver) {
 
 	driver.Tap(ebiten.KeySpace)
 	waitMCPSnapshot(t, driver, 3*time.Second, func(s mcpTortureSnapshot) bool {
-		return s.State == avebi.Playing && s.Position >= 75*time.Millisecond
+		return s.State == avebi.Playing && s.FramePTS >= 500*time.Millisecond && mcpAVSynced(s)
 	})
+	sampleMCPAVSync(t, driver, 750*time.Millisecond)
 	playingImage := driver.Screenshot()
 	if !hasNonBlackPixels(playingImage.Pix) {
 		t.Fatal("playing capture remained entirely black")
@@ -258,7 +259,7 @@ func runMCPControlIntegration(t *testing.T, driver *ebitenmcp.Driver) {
 
 	driver.Tap(ebiten.KeySpace)
 	waitMCPSnapshot(t, driver, 3*time.Second, func(s mcpTortureSnapshot) bool {
-		return s.State == avebi.Playing && s.Position > seeked.Position+50*time.Millisecond
+		return s.State == avebi.Playing && s.Position > seeked.Position+50*time.Millisecond && mcpAVSynced(s)
 	})
 	driver.Tap(ebiten.KeyS)
 	stopped := mcpSnapshot(t, driver)
@@ -278,7 +279,7 @@ func runMCPControlIntegration(t *testing.T, driver *ebitenmcp.Driver) {
 	})
 	driver.Tap(ebiten.KeySpace)
 	replayed := waitMCPSnapshot(t, driver, 3*time.Second, func(s mcpTortureSnapshot) bool {
-		return s.State == avebi.Playing && !s.HasEnded && s.Position >= 75*time.Millisecond && s.Position < s.Duration
+		return s.State == avebi.Playing && !s.HasEnded && s.Position >= 75*time.Millisecond && s.Position < s.Duration && mcpAVSynced(s)
 	})
 	if replayed.FramePTS >= replayed.Duration {
 		t.Fatalf("replay retained end frame PTS %s", replayed.FramePTS)
@@ -291,13 +292,51 @@ func runMCPControlIntegration(t *testing.T, driver *ebitenmcp.Driver) {
 		return player.Seek(max(0, player.Duration()-150*time.Millisecond))
 	})
 	looped := waitMCPSnapshot(t, driver, 3*time.Second, func(s mcpTortureSnapshot) bool {
-		return s.Looping && s.State == avebi.Playing && s.Position < 500*time.Millisecond
+		return s.Looping && s.State == avebi.Playing && s.Position < 500*time.Millisecond && mcpAVSynced(s)
 	})
 	if looped.HasEnded {
 		t.Fatal("looping playback was reported as ended")
 	}
 	driver.Tap(ebiten.KeyL)
 	driver.Tap(ebiten.KeyS)
+}
+
+func sampleMCPAVSync(t *testing.T, driver *ebitenmcp.Driver, duration time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(duration)
+	for time.Now().Before(deadline) {
+		snapshot := mcpSnapshot(t, driver)
+		if snapshot.State != avebi.Playing {
+			t.Fatalf("player stopped during A/V sync sampling: %#v", snapshot)
+		}
+		assertMCPAVSync(t, snapshot)
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+const mcpAVSyncTolerance = 300 * time.Millisecond
+
+func assertMCPAVSync(t *testing.T, snapshot mcpTortureSnapshot) {
+	t.Helper()
+	if mcpAVSynced(snapshot) {
+		return
+	}
+	drift := snapshot.FramePTS - snapshot.Position
+	if drift < 0 {
+		drift = -drift
+	}
+	t.Fatalf(
+		"audio/video drift = %s (audio clock %s, video PTS %s), tolerance %s",
+		drift,
+		snapshot.Position,
+		snapshot.FramePTS,
+		mcpAVSyncTolerance,
+	)
+}
+
+func mcpAVSynced(snapshot mcpTortureSnapshot) bool {
+	drift := snapshot.FramePTS - snapshot.Position
+	return drift >= -mcpAVSyncTolerance && drift <= mcpAVSyncTolerance
 }
 
 func runMCPTorture(t *testing.T, driver *ebitenmcp.Driver) {
