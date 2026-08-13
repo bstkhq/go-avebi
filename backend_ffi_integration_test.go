@@ -28,6 +28,8 @@ func TestFFmpegRuntimeMajor(t *testing.T) {
 	want, ok := map[int][3]int{
 		6: {58, 60, 60},
 		7: {59, 61, 61},
+		8: {60, 62, 62},
+		9: {61, 63, 63},
 	}[release]
 	if !ok {
 		t.Fatalf("unsupported expected FFmpeg release %d", release)

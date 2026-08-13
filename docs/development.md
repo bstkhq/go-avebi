@@ -16,15 +16,15 @@ The release includes the fixes required by avebi:
 
 - the correct FFmpeg 6 `AVFrame` audio layout;
 - the correct `swr_convert` argument order;
-- runtime ABI selection and validation for FFmpeg 6 and 7.
+- runtime ABI selection and validation for FFmpeg 6 through 9.
 
 This is a normal module dependency. Downstream applications do not need a
 `replace` directive.
 
 ## Compatibility CI
 
-`.github/workflows/ffmpeg-integration.yml` runs required jobs for FFmpeg 6 and
-FFmpeg 7. Each job:
+`.github/workflows/ffmpeg-integration.yml` runs required jobs for FFmpeg 6, 7,
+8 and 9. Each job:
 
 1. generates a short H.264/AAC fixture;
 2. asserts the loaded libavutil, libavcodec and libavformat family;
@@ -32,9 +32,9 @@ FFmpeg 7. Each job:
 4. drives the media-player example through the go-ebiten-mcp API for 100 control
    and stress cycles.
 
-The FFmpeg 7 job builds FFmpeg 7.1.1 from its pinned source commit and caches the
-result. This makes ABI selection deterministic instead of relying on the runner's
-system packages.
+The jobs build the pinned FFmpeg 6.1.6, 7.1.5, 8.1.2 and 9.0.1 release tarballs
+and cache the results. This makes ABI selection deterministic instead of relying
+on the runner's system packages.
 
 ## Real-media integration tests
 
@@ -49,7 +49,7 @@ AVEBI_TEST_AUDIO=1 \
   go test -count=1 ./...
 ```
 
-`AVEBI_EXPECT_FFMPEG_MAJOR` accepts `6` or `7` and verifies the actual core
+`AVEBI_EXPECT_FFMPEG_MAJOR` accepts `6`, `7`, `8` or `9` and verifies the actual core
 libraries loaded by go-ffmpeg-ffi.
 
 ## go-ebiten-mcp integration and stress test
@@ -64,7 +64,7 @@ AVEBI_MCP_TEST_MEDIA=/path/to/video-with-audio.mp4 \
 AVEBI_MCP_TORTURE_CYCLES=500 \
   ebitenmcp run --x container --screen 1280x720 \
   go test -count=1 \
-  -run '^TestFFGOMCPIntegrationAndTorture$' -v ./examples/mediaplayer
+  -run '^TestFFmpegMCPIntegrationAndTorture$' -v ./examples/mediaplayer
 ```
 
 The default is 100 cycles. The thresholds can be adjusted with:

@@ -18,12 +18,12 @@ for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
 
 - Go 1.25 or newer.
 - Ebitengine 2.9.9.
-- FFmpeg 6.x or 7.x shared libraries available at runtime.
+- FFmpeg 6.x, 7.x, 8.x or 9.x shared libraries available at runtime.
 - A desktop `amd64` or `arm64` target. iOS and Android are not supported.
 
-The integration suite currently validates Linux `amd64` with FFmpeg 6.1 and
-7.1.1. Codec and container availability still depends on how the installed
-FFmpeg libraries were built. FFmpeg 8 is not currently supported.
+The integration suite validates Linux `amd64` with FFmpeg 6.1.6, 7.1.5, 8.1.2
+and 9.0.1. Codec and container availability still depends on how the installed
+FFmpeg libraries were built.
 
 ## Installation
 
@@ -62,8 +62,8 @@ go run .
 
 The path must be configured before process startup because go-ffmpeg-ffi
 initializes its bindings while Go packages are initialized. If one directory
-contains both families, go-ffmpeg-ffi prefers FFmpeg 7 and verifies that all
-loaded libraries belong to the same supported ABI.
+contains multiple families, go-ffmpeg-ffi prefers the newest supported family
+and verifies that all loaded libraries belong to the same ABI.
 
 ## Basic usage
 
@@ -167,7 +167,7 @@ Ebitengine applications when that instrumentation is not enabled.
 - Live streams are video-only.
 - `NextVideoFrame` is not implemented.
 - Hardware-accelerated decoding is not enabled by avebi.
-- FFmpeg 8 and mobile platforms are not supported.
+- Mobile platforms are not supported.
 
 See [development and testing](docs/development.md) for the compatibility matrix,
 integration fixtures and stress-test commands.

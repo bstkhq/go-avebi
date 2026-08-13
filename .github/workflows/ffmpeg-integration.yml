@@ -23,8 +23,20 @@ jobs:
       matrix:
         include:
           - ffmpeg: 6
+            release: 6.1.6
+            sha256: d4fcb164028dd3beee5d92c0ac72e46aac6973c75ea12dc14de07bf8f407370a
             status: required
           - ffmpeg: 7
+            release: 7.1.5
+            sha256: de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+            status: required
+          - ffmpeg: 8
+            release: 8.1.2
+            sha256: 464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
+            status: required
+          - ffmpeg: 9
+            release: 9.0.1
+            sha256: cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635
             status: required
 
     env:
@@ -43,10 +55,12 @@ jobs:
           go-version: "1.25.x"
           cache: true
 
-      - name: Install system dependencies and FFmpeg 6
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            curl \
             ffmpeg \
             libasound2-dev \
             libasound2-plugins \
@@ -59,6 +73,7 @@ jobs:
             libxxf86vm-dev \
             pulseaudio \
             pulseaudio-utils \
+            xz-utils \
             xvfb
 
       - name: Generate H.264/AAC integration media
@@ -70,30 +85,30 @@ jobs:
             -t 3 -c:v libx264 -pix_fmt yuv420p -c:a aac \
             .ci-cache/media/av-smoke.mp4
 
-      - name: Restore FFmpeg 7.1.1 shared libraries
-        if: matrix.ffmpeg == 7
-        id: ffmpeg7-cache
+      - name: Restore FFmpeg shared libraries
+        id: ffmpeg-cache
         uses: actions/cache@v4
         with:
-          path: .ci-cache/ffmpeg-7.1.1
-          key: ffmpeg-7.1.1-linux-x64-h264-aac-v2
+          path: .ci-cache/ffmpeg-${{ matrix.release }}
+          key: ffmpeg-${{ matrix.release }}-linux-x64-h264-aac-v1
 
-      - name: Check out FFmpeg 7.1.1
-        if: matrix.ffmpeg == 7 && steps.ffmpeg7-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@v5
-        with:
-          repository: FFmpeg/FFmpeg
-          ref: db69d06eeeab4f46da15030a80d539efb4503ca8
-          path: .ci/ffmpeg-7-source
-          persist-credentials: false
-
-      - name: Build FFmpeg 7.1.1 shared libraries
-        if: matrix.ffmpeg == 7 && steps.ffmpeg7-cache.outputs.cache-hit != 'true'
+      - name: Build FFmpeg ${{ matrix.release }} shared libraries
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         run: |
-          mkdir -p .ci-cache/ffmpeg-7-build .ci-cache/ffmpeg-7.1.1
-          cd .ci-cache/ffmpeg-7-build
-          "$GITHUB_WORKSPACE/.ci/ffmpeg-7-source/configure" \
-            --prefix="$GITHUB_WORKSPACE/.ci-cache/ffmpeg-7.1.1" \
+          mkdir -p \
+            .ci-cache/ffmpeg-source \
+            .ci-cache/ffmpeg-build \
+            .ci-cache/ffmpeg-${{ matrix.release }}
+          curl --fail --location --retry 3 \
+            --output .ci-cache/ffmpeg.tar.xz \
+            https://ffmpeg.org/releases/ffmpeg-${{ matrix.release }}.tar.xz
+          echo "${{ matrix.sha256 }}  .ci-cache/ffmpeg.tar.xz" | sha256sum --check --strict
+          tar -xf .ci-cache/ffmpeg.tar.xz \
+            --strip-components=1 \
+            -C .ci-cache/ffmpeg-source
+          cd .ci-cache/ffmpeg-build
+          "$GITHUB_WORKSPACE/.ci-cache/ffmpeg-source/configure" \
+            --prefix="$GITHUB_WORKSPACE/.ci-cache/ffmpeg-${{ matrix.release }}" \
             --enable-shared \
             --disable-static \
             --disable-programs \
@@ -114,12 +129,7 @@ jobs:
 
       - name: Select FFmpeg runtime
         run: |
-          if [[ "${{ matrix.ffmpeg }}" == "7" ]]; then
-            ffmpeg_lib_dir="$GITHUB_WORKSPACE/.ci-cache/ffmpeg-7.1.1/lib"
-          else
-            ffmpeg_lib_dir="/usr/lib/x86_64-linux-gnu"
-          fi
-          echo "LD_LIBRARY_PATH=$ffmpeg_lib_dir" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/.ci-cache/ffmpeg-${{ matrix.release }}/lib" >> "$GITHUB_ENV"
 
       - name: Start a paced audio sink
         run: |
@@ -131,7 +141,7 @@ jobs:
       - name: Verify loaded FFmpeg ABI
         run: >-
           xvfb-run -a -s "-screen 0 1280x720x24"
-          go test -count=1 -run '^TestFFGORuntimeMajor$' -v .
+          go test -count=1 -run '^TestFFmpegRuntimeMajor$' -v .
 
       - name: Vet
         run: go vet ./...
@@ -146,5 +156,5 @@ jobs:
         run: >-
           xvfb-run -a -s "-screen 0 1280x720x24"
           go test -count=1
-          -run '^TestFFGOMCPIntegrationAndTorture$' -v
+          -run '^TestFFmpegMCPIntegrationAndTorture$' -v
           ./examples/mediaplayer
