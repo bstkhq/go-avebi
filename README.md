@@ -2,7 +2,8 @@
 
 avebi plays local video and live video streams in
 [Ebitengine](https://ebitengine.org/) applications. It decodes media through
-[ffgo](https://github.com/obinnaokechukwu/ffgo), converts video frames to RGBA
+[go-ffmpeg-ffi](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.0.0),
+converts video frames to RGBA
 for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
 
 ## Features
@@ -30,23 +31,15 @@ FFmpeg libraries were built. FFmpeg 8 is not currently supported.
 go get github.com/erparts/go-avebi
 ```
 
-Until the required ffgo fixes are released upstream, applications importing
-avebi must also apply its temporary dependency override:
-
-```sh
-go mod edit -replace=github.com/obinnaokechukwu/ffgo=github.com/erparts/ffgo@v0.0.0-20260806221945-0fd8f50d50c3
-go mod tidy
-```
-
-Go does not propagate `replace` directives from dependencies. The override can
-be removed once avebi updates to an upstream ffgo release containing the fixes.
-See [development and testing](docs/development.md) for the pinned changes.
+Avebi depends directly on go-ffmpeg-ffi v1.0.0. Applications do not need a
+dependency override. See [development and testing](docs/development.md) for
+the validated changes.
 
 ### Selecting an FFmpeg installation
 
-ffgo checks the platform's dynamic-library search path before standard system
-locations. Set it before starting the program and point it at a directory that
-contains only the FFmpeg family you want to load.
+go-ffmpeg-ffi checks the platform's dynamic-library search path before standard
+system locations. Set it before starting the program and point it at a directory
+that contains only the FFmpeg family you want to load.
 
 Linux:
 
@@ -67,10 +60,10 @@ $env:PATH = "C:\ffmpeg-7\bin;$env:PATH"
 go run .
 ```
 
-The path must be configured before process startup because ffgo initializes its
-bindings while Go packages are initialized. If one directory contains both
-families, ffgo prefers FFmpeg 7 and verifies that all loaded libraries belong to
-the same supported ABI.
+The path must be configured before process startup because go-ffmpeg-ffi
+initializes its bindings while Go packages are initialized. If one directory
+contains both families, go-ffmpeg-ffi prefers FFmpeg 7 and verifies that all
+loaded libraries belong to the same supported ABI.
 
 ## Basic usage
 

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/obinnaokechukwu/ffgo"
+	ffgo "github.com/bstkhq/go-ffmpeg-ffi"
 )
 
 const expectedFFmpegMajorEnv = "AVEBI_EXPECT_FFMPEG_MAJOR"

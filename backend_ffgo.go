@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/obinnaokechukwu/ffgo"
-	"github.com/obinnaokechukwu/ffgo/avutil"
+	ffgo "github.com/bstkhq/go-ffmpeg-ffi"
+	"github.com/bstkhq/go-ffmpeg-ffi/avutil"
 )
 
 type ffgoBackend struct{}
@@ -82,7 +82,7 @@ func openFFGODecoder(ctx context.Context, source string, opts backendOpenOptions
 		}
 	}
 
-	decoder, err := ffgo.NewDecoderWithOptions(source, decoderOpts)
+	decoder, err := ffgo.NewDecoder(source, decoderOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +313,7 @@ func (d *ffgoDecoder) convertAudioFrameLocked(frame *ffgo.FrameWrapper) (backend
 }
 
 func ffgoPTS(pts int64, timeBase ffgo.Rational) time.Duration {
-	if pts == avutil.NoPTSValue || timeBase.Num <= 0 || timeBase.Den <= 0 {
+	if pts == avutil.AV_NOPTS_VALUE || timeBase.Num <= 0 || timeBase.Den <= 0 {
 		return 0
 	}
 	seconds := float64(pts) * float64(timeBase.Num) / float64(timeBase.Den)

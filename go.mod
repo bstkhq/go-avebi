@@ -4,8 +4,8 @@ go 1.25.0
 
 require (
 	github.com/bstkhq/go-ebiten-mcp v0.1.0
+	github.com/bstkhq/go-ffmpeg-ffi v1.0.0
 	github.com/hajimehoshi/ebiten/v2 v2.9.9
-	github.com/obinnaokechukwu/ffgo v0.1.0
 )
 
 require (
@@ -25,5 +25,3 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
-
-replace github.com/obinnaokechukwu/ffgo => github.com/erparts/ffgo v0.0.0-20260806221945-0fd8f50d50c3

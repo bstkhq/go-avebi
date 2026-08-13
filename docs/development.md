@@ -1,28 +1,25 @@
 # Development and testing
 
-This document describes avebi's temporary ffgo dependency, compatibility CI and
+This document describes avebi's go-ffmpeg-ffi dependency, compatibility CI and
 opt-in media tests. User-facing installation and playback examples belong in
 the project [README](../README.md).
 
-## Temporary ffgo integration pin
+## go-ffmpeg-ffi dependency
 
-The repository imports ffgo through its upstream module path and temporarily
-replaces it with this integration commit:
+The repository depends directly on the validated v1.0.0 release:
 
 ```text
-github.com/erparts/ffgo v0.0.0-20260806221945-0fd8f50d50c3
+github.com/bstkhq/go-ffmpeg-ffi v1.0.0
 ```
 
-The commit combines three independently prepared changes:
+The release includes the fixes required by avebi:
 
 - the correct FFmpeg 6 `AVFrame` audio layout;
 - the correct `swr_convert` argument order;
 - runtime ABI selection and validation for FFmpeg 6 and 7.
 
-The fork retains ffgo's upstream module identity so its fixes can be proposed
-upstream independently. Because dependency replacements are not transitive,
-applications testing avebi before those changes are released must repeat the
-`replace` directive shown in the README.
+This is a normal module dependency. Downstream applications do not need a
+`replace` directive.
 
 ## Compatibility CI
 
@@ -53,7 +50,7 @@ AVEBI_TEST_AUDIO=1 \
 ```
 
 `AVEBI_EXPECT_FFMPEG_MAJOR` accepts `6` or `7` and verifies the actual core
-libraries loaded by ffgo.
+libraries loaded by go-ffmpeg-ffi.
 
 ## go-ebiten-mcp integration and stress test
 
