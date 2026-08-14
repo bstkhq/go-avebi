@@ -19,11 +19,14 @@ for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
 - Go 1.25 or newer.
 - Ebitengine 2.9.9.
 - FFmpeg 6.x, 7.x, 8.x or 9.x shared libraries available at runtime.
-- A desktop `amd64` or `arm64` target. iOS and Android are not supported.
+- A supported 64-bit target: Linux, macOS, Windows, Android or iOS on the
+  architectures listed in the [platform matrix](docs/platforms.md).
 
 The integration suite validates Linux `amd64` with FFmpeg 6.1.6, 7.1.5, 8.1.2
-and 9.0.1. Codec and container availability still depends on how the installed
-FFmpeg libraries were built.
+and 9.0.1. Platform CI also validates native playback on the desktop targets
+where GitHub provides runners and compiles Ebitengine bindings for Android and
+iOS. Codec and container availability still depends on how the installed FFmpeg
+libraries were built.
 
 ## Installation
 
@@ -64,6 +67,11 @@ The path must be configured before process startup because go-ffmpeg-ffi
 initializes its bindings while Go packages are initialized. If one directory
 contains multiple families, go-ffmpeg-ffi prefers the newest supported family
 and verifies that all loaded libraries belong to the same ABI.
+
+Android applications package unversioned `libav*.so` files in the APK or AAR.
+iOS applications embed signed FFmpeg frameworks or link FFmpeg into the process
+image. See [platform support and packaging](docs/platforms.md) for the precise
+validation level and mobile requirements.
 
 ## Basic usage
 
@@ -161,13 +169,15 @@ go run ./examples/stream rtsp://example.test/live
 
 The examples are instrumented for automated interaction but behave as ordinary
 Ebitengine applications when that instrumentation is not enabled.
+See [`examples/mobileplayer`](examples/mobileplayer) for Android and iOS
+binding.
 
 ## Current limitations
 
 - Live streams are video-only.
 - `NextVideoFrame` is not implemented.
 - Hardware-accelerated decoding is not enabled by avebi.
-- Mobile platforms are not supported.
+- Mobile applications must package their own compatible FFmpeg libraries.
 
 See [development and testing](docs/development.md) for the compatibility matrix,
-integration fixtures and stress-test commands.
+platform checks and stress-test commands.
