@@ -1,4 +1,4 @@
-//go:build !ios && !android && (amd64 || arm64)
+//go:build amd64 || arm64
 
 package avebi
 
