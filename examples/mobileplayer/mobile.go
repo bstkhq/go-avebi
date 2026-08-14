@@ -6,41 +6,62 @@ package mobile
 
 import (
 	"errors"
+	"image/color"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/erparts/go-avebi"
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	ebitenmobile "github.com/hajimehoshi/ebiten/v2/mobile"
 )
 
 const (
 	logicalWidth  = 640
 	logicalHeight = 360
+	pickerX       = 16
+	pickerY       = logicalHeight - 48
+	pickerWidth   = 120
+	pickerHeight  = 32
 )
 
+// FilePickerBridge is implemented by apk-ebiten-builder when the Android host
+// discovers this optional gomobile contract.
+type FilePickerBridge interface {
+	Open(mimeType string)
+}
+
 type game struct {
-	mutex          sync.Mutex
-	player         *avebi.Player
-	frame          *ebiten.Image
-	pendingPath    string
-	pendingSeek    time.Duration
-	openRequested  bool
-	seekRequested  bool
-	closeRequested bool
-	lastError      string
+	mutex           sync.Mutex
+	player          *avebi.Player
+	frame           *ebiten.Image
+	filePicker      FilePickerBridge
+	pendingPath     string
+	pendingSeek     time.Duration
+	pendingOwned    bool
+	ownedPath       string
+	openRequested   bool
+	seekRequested   bool
+	closeRequested  bool
+	pickerRequested bool
+	lastError       string
 }
 
 func (g *game) Update() error {
+	pickerPressed := pickerButtonPressed()
+	var picker FilePickerBridge
+
 	g.mutex.Lock()
-	defer g.mutex.Unlock()
 	if g.closeRequested {
 		g.closeRequested = false
 		g.closeLocked()
 	}
 	if g.openRequested {
 		g.openRequested = false
-		g.openLocked(g.pendingPath)
+		g.openLocked(g.pendingPath, g.pendingOwned)
+		g.pendingOwned = false
 	}
 	if g.seekRequested {
 		g.seekRequested = false
@@ -48,16 +69,24 @@ func (g *game) Update() error {
 			g.recordError(g.player.Seek(g.pendingSeek))
 		}
 	}
-	if g.player == nil {
-		return nil
+	if g.player != nil {
+		frame, err := g.player.CurrentFrame()
+		if err != nil {
+			g.recordError(err)
+		} else {
+			g.frame = frame
+			g.recordError(g.player.Error())
+		}
 	}
-	frame, err := g.player.CurrentFrame()
-	if err != nil {
-		g.recordError(err)
-		return nil
+	if pickerPressed && g.filePicker != nil && !g.pickerRequested {
+		g.pickerRequested = true
+		picker = g.filePicker
 	}
-	g.frame = frame
-	g.recordError(g.player.Error())
+	g.mutex.Unlock()
+
+	if picker != nil {
+		picker.Open("*/*")
+	}
 	return nil
 }
 
@@ -66,6 +95,21 @@ func (g *game) Draw(screen *ebiten.Image) {
 	defer g.mutex.Unlock()
 	if g.frame != nil {
 		avebi.Draw(screen, g.frame)
+	} else {
+		screen.Fill(color.Black)
+	}
+	if g.filePicker != nil {
+		buttonColor := color.RGBA{R: 0x28, G: 0x69, B: 0xb8, A: 0xe8}
+		label := "Open media"
+		if g.pickerRequested {
+			buttonColor = color.RGBA{R: 0x55, G: 0x55, B: 0x55, A: 0xe8}
+			label = "Selecting..."
+		}
+		ebitenutil.DrawRect(screen, pickerX, pickerY, pickerWidth, pickerHeight, buttonColor)
+		ebitenutil.DebugPrintAt(screen, label, pickerX+12, pickerY+10)
+	}
+	if g.lastError != "" {
+		ebitenutil.DebugPrintAt(screen, g.lastError, 16, 16)
 	}
 }
 
@@ -73,32 +117,48 @@ func (*game) Layout(int, int) (int, int) {
 	return logicalWidth, logicalHeight
 }
 
-func (g *game) openLocked(path string) {
+func (g *game) openLocked(path string, owned bool) {
 	if g.player != nil {
 		if err := g.player.Close(); err != nil {
 			g.recordError(err)
+			if owned {
+				_ = os.Remove(path)
+			}
 			return
 		}
 		g.player = nil
 		g.frame = nil
+		g.removeOwnedPathLocked()
 	}
 
 	err := avebi.CreateAudioContextForMedia(path)
 	if err != nil && !errors.Is(err, avebi.ErrNoAudio) && !errors.Is(err, avebi.ErrNonNilAudioContext) {
 		g.recordError(err)
+		if owned {
+			_ = os.Remove(path)
+		}
 		return
 	}
 	player, err := avebi.NewPlayer(path)
 	if err != nil {
 		g.recordError(err)
+		if owned {
+			_ = os.Remove(path)
+		}
 		return
 	}
 	if err := player.Play(); err != nil {
 		_ = player.Close()
 		g.recordError(err)
+		if owned {
+			_ = os.Remove(path)
+		}
 		return
 	}
 	g.player = player
+	if owned {
+		g.ownedPath = path
+	}
 	g.lastError = ""
 }
 
@@ -108,6 +168,15 @@ func (g *game) closeLocked() {
 	}
 	g.player = nil
 	g.frame = nil
+	g.removeOwnedPathLocked()
+}
+
+func (g *game) removeOwnedPathLocked() {
+	if g.ownedPath == "" {
+		return
+	}
+	_ = os.Remove(g.ownedPath)
+	g.ownedPath = ""
 }
 
 func (g *game) recordError(err error) {
@@ -117,6 +186,27 @@ func (g *game) recordError(err error) {
 }
 
 var currentGame = &game{}
+
+func pickerButtonPressed() bool {
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		x, y := ebiten.CursorPosition()
+		if pickerButtonContains(x, y) {
+			return true
+		}
+	}
+	for _, touchID := range inpututil.AppendJustPressedTouchIDs(nil) {
+		x, y := ebiten.TouchPosition(touchID)
+		if pickerButtonContains(x, y) {
+			return true
+		}
+	}
+	return false
+}
+
+func pickerButtonContains(x, y int) bool {
+	return x >= pickerX && x < pickerX+pickerWidth &&
+		y >= pickerY && y < pickerY+pickerHeight
+}
 
 func init() {
 	ebitenmobile.SetGame(currentGame)
@@ -141,11 +231,39 @@ func SetAndroidID(int64) {}
 // relative durations, so the example does not need the device timezone.
 func SetTimezone(string) {}
 
+// RegisterFilePickerBridge receives apk-ebiten-builder's optional Android
+// document picker. iOS hosts can continue to call Open with a local path.
+func RegisterFilePickerBridge(bridge FilePickerBridge) {
+	currentGame.mutex.Lock()
+	defer currentGame.mutex.Unlock()
+	currentGame.filePicker = bridge
+	currentGame.pickerRequested = false
+}
+
+// FilePickerResult receives a cache-backed local path, cancellation, or an
+// asynchronous Android picker error from apk-ebiten-builder.
+func FilePickerResult(path, message string) {
+	currentGame.mutex.Lock()
+	defer currentGame.mutex.Unlock()
+	currentGame.pickerRequested = false
+	if message != "" {
+		currentGame.lastError = message
+		return
+	}
+	if path == "" {
+		return
+	}
+	currentGame.pendingPath = path
+	currentGame.pendingOwned = true
+	currentGame.openRequested = true
+}
+
 // Open loads a local media file and starts synchronized playback.
 func Open(path string) {
 	currentGame.mutex.Lock()
 	defer currentGame.mutex.Unlock()
 	currentGame.pendingPath = path
+	currentGame.pendingOwned = false
 	currentGame.openRequested = true
 }
 

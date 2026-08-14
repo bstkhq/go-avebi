@@ -36,6 +36,13 @@ an x86-64 emulator. `make compile` can be used when only the generated AAR is
 needed. Both commands use `apk-ebiten-builder`; the example does not invoke
 `ebitenmobile` directly.
 
+The Android build also discovers the example's optional `FilePickerBridge`.
+Tapping **Open media** launches Android's document picker without requesting a
+storage permission. The builder copies the selected document into the
+application cache and returns a local path to Go; the example removes that copy
+when playback closes or another selection replaces it. Applications that
+already own a local path can continue to call `Open` directly.
+
 CI builds:
 
 - Android APKs containing FFmpeg for `arm64` and `amd64` (x86-64), API 33;

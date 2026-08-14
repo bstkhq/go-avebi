@@ -7,7 +7,7 @@ ANDROID_MIN_SDK ?= 33
 
 BUILDER_DIR ?= .build/apk-ebiten-builder
 BUILDER_REPO ?= https://github.com/bstkhq/apk-ebiten-builder
-BUILDER_REF ?= d98d43ce6be09e17c03454ba5cb5cdc48c2438b9
+BUILDER_REF ?= cff86308acb72497129a1f815d05423e4382ca0c
 ROOT_DIR ?= $(abspath $(BUILDER_DIR))
 INCLUDE_PATH ?= $(BUILDER_DIR)/Include.mk
 
