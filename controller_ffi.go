@@ -51,9 +51,13 @@ type playbackController interface {
 var _ playbackController = (*ffiLocalController)(nil)
 
 type ffiLocalController struct {
-	mutex   sync.Mutex
-	decoder mediaDecoder
-	info    backendMediaInfo
+	// mutex protects playback state. Native decoder calls are serialized
+	// separately so an audio read cannot hold playback state while decoding.
+	mutex        sync.Mutex
+	readMutex    sync.Mutex
+	decoderMutex sync.Mutex
+	decoder      mediaDecoder
+	info         backendMediaInfo
 
 	state   PlaybackState
 	looping bool
@@ -79,6 +83,10 @@ type ffiLocalController struct {
 	muted              bool
 
 	decodeErr error
+
+	// decodeGeneration invalidates a frame decoded across a seek, reset, or
+	// close while the playback mutex was released.
+	decodeGeneration uint64
 }
 
 func newFFmpegLocalController(decoder mediaDecoder) *ffiLocalController {
@@ -118,7 +126,7 @@ func (c *ffiLocalController) Play() error {
 		if err := c.noLockCloseAudioPlayer(); err != nil {
 			return err
 		}
-		if err := c.decoder.Seek(0); err != nil {
+		if err := c.seekDecoder(0); err != nil {
 			return err
 		}
 		c.noLockResetPlayback(0)
@@ -172,7 +180,7 @@ func (c *ffiLocalController) Stop() error {
 	if err := c.noLockCloseAudioPlayer(); err != nil {
 		return err
 	}
-	if err := c.decoder.Seek(0); err != nil {
+	if err := c.seekDecoder(0); err != nil {
 		return err
 	}
 	c.noLockResetPlayback(0)
@@ -187,9 +195,10 @@ func (c *ffiLocalController) Close() error {
 		return nil
 	}
 	c.closed = true
+	c.decodeGeneration++
 	playerErr := c.noLockCloseAudioPlayer()
 	c.noLockRecycleVideoFrames()
-	decoderErr := c.decoder.Close()
+	decoderErr := c.closeDecoder()
 	c.videoBuffers.clear()
 	return errors.Join(playerErr, decoderErr)
 }
@@ -209,7 +218,7 @@ func (c *ffiLocalController) Seek(position time.Duration) (*backendFrame, error)
 	if err := c.noLockCloseAudioPlayer(); err != nil {
 		return nil, err
 	}
-	if err := c.decoder.Seek(position); err != nil {
+	if err := c.seekDecoder(position); err != nil {
 		return nil, err
 	}
 	c.noLockResetPlayback(position)
@@ -259,7 +268,7 @@ func (c *ffiLocalController) Seek(position time.Duration) (*backendFrame, error)
 // requested target.
 func (c *ffiLocalController) noLockPrimeAfterSeek() (*backendFrame, error) {
 	for {
-		frame, err := c.decoder.ReadFrame(context.Background(), &c.videoBuffers)
+		frame, err := c.readDecoderFrame(context.Background())
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return c.lastVideo, nil
@@ -322,7 +331,7 @@ func (c *ffiLocalController) noLockPosition(now time.Time) (time.Duration, error
 			if err := c.noLockCloseAudioPlayer(); err != nil {
 				return 0, err
 			}
-			if err := c.decoder.Seek(0); err != nil {
+			if err := c.seekDecoder(0); err != nil {
 				return 0, err
 			}
 			c.noLockResetPlayback(0)
@@ -335,7 +344,7 @@ func (c *ffiLocalController) noLockPosition(now time.Time) (time.Duration, error
 			return 0, nil
 		}
 		position %= c.info.Duration
-		if err := c.decoder.Seek(position); err != nil {
+		if err := c.seekDecoder(position); err != nil {
 			return 0, err
 		}
 		c.noLockRecycleVideoFrames()
@@ -438,11 +447,11 @@ func (c *ffiLocalController) CurrentVideoFrame() (*backendFrame, bool, error) {
 	}
 
 	for c.lastVideo == nil || c.lastVideo.PTS+c.frameDuration() < position {
-		frame, err := c.decoder.ReadFrame(context.Background(), &c.videoBuffers)
+		frame, err := c.readDecoderFrame(context.Background())
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				if c.looping {
-					if err := c.decoder.Seek(0); err != nil {
+					if err := c.seekDecoder(0); err != nil {
 						return nil, false, err
 					}
 					c.noLockRecycleVideoFrames()
@@ -517,13 +526,33 @@ func (c *ffiLocalController) Read(buffer []byte) (int, error) {
 	if len(buffer)&3 != 0 {
 		buffer = buffer[:len(buffer)&(math.MaxInt-3)]
 	}
+	c.readMutex.Lock()
+	defer c.readMutex.Unlock()
+
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
+	if c.closed {
+		return 0, io.EOF
+	}
 
 	served := c.noLockCopyAudio(buffer)
 	buffer = buffer[served:]
 	for len(buffer) > 0 {
-		frame, err := c.decoder.ReadFrame(context.Background(), &c.videoBuffers)
+		generation := c.decodeGeneration
+		// Native decoding can take most of a frame interval. Keep playback state
+		// available to the Ebitengine thread while the audio reader decodes ahead.
+		c.mutex.Unlock()
+		frame, err := c.readDecoderFrame(context.Background())
+		c.mutex.Lock()
+		if c.closed {
+			// Close already cleared the pool; let this final buffer become
+			// unreachable instead of retaining it in a closed controller.
+			return served, io.EOF
+		}
+		if generation != c.decodeGeneration {
+			recycleBackendFrame(&c.videoBuffers, &frame)
+			return served, io.EOF
+		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				// The decoder can reach EOF while Oto still has buffered PCM to
@@ -556,6 +585,24 @@ func (c *ffiLocalController) Read(buffer []byte) (int, error) {
 		buffer = buffer[copied:]
 	}
 	return served, nil
+}
+
+func (c *ffiLocalController) readDecoderFrame(ctx context.Context) (backendFrame, error) {
+	c.decoderMutex.Lock()
+	defer c.decoderMutex.Unlock()
+	return c.decoder.ReadFrame(ctx, &c.videoBuffers)
+}
+
+func (c *ffiLocalController) seekDecoder(position time.Duration) error {
+	c.decoderMutex.Lock()
+	defer c.decoderMutex.Unlock()
+	return c.decoder.Seek(position)
+}
+
+func (c *ffiLocalController) closeDecoder() error {
+	c.decoderMutex.Lock()
+	defer c.decoderMutex.Unlock()
+	return c.decoder.Close()
 }
 
 func (c *ffiLocalController) noLockCopyAudio(buffer []byte) int {
@@ -605,6 +652,7 @@ func (c *ffiLocalController) noLockCloseAudioPlayer() error {
 }
 
 func (c *ffiLocalController) noLockResetPlayback(position time.Duration) {
+	c.decodeGeneration++
 	c.noLockRecycleVideoFrames()
 	c.audioQueue = c.audioQueue[:0]
 	c.firstAudioPTS = position
