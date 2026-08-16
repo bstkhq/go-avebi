@@ -1,4 +1,4 @@
-package mobile
+package mediaplayer
 
 import (
 	"fmt"
@@ -19,6 +19,7 @@ const (
 
 	timelineHeight    = 8
 	timelineHitMargin = 9
+	maxControlButtons = 6
 )
 
 type playbackAction uint8
@@ -44,6 +45,7 @@ type controlButton struct {
 	y      int
 	width  int
 	height int
+	input  controlInput
 }
 
 func (b controlButton) contains(x, y int) bool {
@@ -52,13 +54,22 @@ func (b controlButton) contains(x, y int) bool {
 }
 
 type controlLayout struct {
-	width    int
-	height   int
-	panelY   int
-	statusY  int
-	timeline controlButton
-	buttons  [6]controlButton
-	stacked  bool
+	width       int
+	height      int
+	panelY      int
+	statusY     int
+	timeline    controlButton
+	buttons     [maxControlButtons]controlButton
+	buttonCount int
+	stacked     bool
+}
+
+var playbackControls = [...]controlInput{
+	{action: actionPlayPause},
+	{action: actionStop},
+	{action: actionSeekRelative, seekDelta: -5 * time.Second},
+	{action: actionSeekRelative, seekDelta: 5 * time.Second},
+	{action: actionToggleLoop},
 }
 
 func logicalSize(outsideWidth, outsideHeight int) (int, int) {
@@ -75,40 +86,50 @@ func roundedScale(value, source, target int) int {
 	return (value*target + source/2) / source
 }
 
-func newControlLayout(width, height int) controlLayout {
+func newControlLayout(width, height int, showOpen bool) controlLayout {
 	if width <= 0 || height <= 0 {
 		width, height = defaultLogicalWidth, defaultLogicalHeight
 	}
 
 	layout := controlLayout{width: width, height: height}
-	rowWidth := width - 2*controlMargin
-	singleRowWidth := 6*minButtonWidth + 5*controlGap
-	layout.stacked = rowWidth < singleRowWidth
+	inputs := layout.buttons[:0]
+	if showOpen {
+		inputs = append(inputs, controlButton{input: controlInput{action: actionOpen}})
+	}
+	for _, input := range playbackControls {
+		inputs = append(inputs, controlButton{input: input})
+	}
+	layout.buttonCount = len(inputs)
 
-	columns := 6
+	availableWidth := width - 2*controlMargin
+	singleRowWidth := layout.buttonCount*minButtonWidth + (layout.buttonCount-1)*controlGap
+	layout.stacked = availableWidth < singleRowWidth
+
+	columns := layout.buttonCount
 	rows := 1
 	if layout.stacked {
-		columns = 3
+		columns = (layout.buttonCount + 1) / 2
 		rows = 2
 	}
+	buttonWidth := minButtonWidth
 	maximumRowWidth := columns*maxButtonWidth + (columns-1)*controlGap
-	if rowWidth > maximumRowWidth {
-		rowWidth = maximumRowWidth
+	if availableWidth >= maximumRowWidth {
+		buttonWidth = maxButtonWidth
+	} else {
+		buttonWidth = (availableWidth - (columns-1)*controlGap) / columns
 	}
-	buttonWidth := (rowWidth - (columns-1)*controlGap) / columns
-	actualRowWidth := columns*buttonWidth + (columns-1)*controlGap
-	rowX := (width - actualRowWidth) / 2
 	bottomRowY := height - controlBottomGap - buttonHeight
 
-	for i := range layout.buttons {
+	for i := range layout.buttonCount {
 		row := i / columns
 		column := i % columns
-		layout.buttons[i] = controlButton{
-			x:      rowX + column*(buttonWidth+controlGap),
-			y:      bottomRowY - (rows-1-row)*(buttonHeight+controlGap),
-			width:  buttonWidth,
-			height: buttonHeight,
-		}
+		buttonsInRow := min(columns, layout.buttonCount-row*columns)
+		rowWidth := buttonsInRow*buttonWidth + (buttonsInRow-1)*controlGap
+		rowX := (width - rowWidth) / 2
+		layout.buttons[i].x = rowX + column*(buttonWidth+controlGap)
+		layout.buttons[i].y = bottomRowY - (rows-1-row)*(buttonHeight+controlGap)
+		layout.buttons[i].width = buttonWidth
+		layout.buttons[i].height = buttonHeight
 	}
 
 	topButtonY := layout.buttons[0].y
@@ -132,22 +153,12 @@ func controlAt(layout controlLayout, x, y int) controlInput {
 		}
 	}
 
-	switch {
-	case layout.buttons[0].contains(x, y):
-		return controlInput{action: actionOpen}
-	case layout.buttons[1].contains(x, y):
-		return controlInput{action: actionPlayPause}
-	case layout.buttons[2].contains(x, y):
-		return controlInput{action: actionStop}
-	case layout.buttons[3].contains(x, y):
-		return controlInput{action: actionSeekRelative, seekDelta: -5 * time.Second}
-	case layout.buttons[4].contains(x, y):
-		return controlInput{action: actionSeekRelative, seekDelta: 5 * time.Second}
-	case layout.buttons[5].contains(x, y):
-		return controlInput{action: actionToggleLoop}
-	default:
-		return controlInput{}
+	for _, button := range layout.buttons[:layout.buttonCount] {
+		if button.contains(x, y) {
+			return button.input
+		}
 	}
+	return controlInput{}
 }
 
 func playbackProgress(position, duration time.Duration) float64 {

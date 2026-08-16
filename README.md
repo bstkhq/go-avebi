@@ -164,14 +164,16 @@ Connection and read deadlines can be configured with
 ## Examples
 
 ```sh
-go run ./examples/mediaplayer /path/to/video.mp4
+go run ./examples/mediaplayer/desktop /path/to/video.mp4
 go run ./examples/stream rtsp://example.test/live
 ```
 
-The examples are instrumented for automated interaction but behave as ordinary
-Ebitengine applications when that instrumentation is not enabled.
-See [`examples/mobileplayer`](examples/mobileplayer) for Android and iOS
-binding.
+The desktop media player receives its file from the command line. Its Android
+build reuses the same controls, diagnostics and playback lifecycle; only the
+Android host with a file picker adds **Open**. See the
+[`mediaplayer` example](examples/mediaplayer) for Android packaging. The examples
+are instrumented for automated interaction but behave as ordinary Ebitengine
+applications when that instrumentation is not enabled.
 
 ## Current limitations
 

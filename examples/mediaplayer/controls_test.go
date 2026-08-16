@@ -1,4 +1,4 @@
-package mobile
+package mediaplayer
 
 import (
 	"testing"
@@ -7,17 +7,22 @@ import (
 
 func TestControlAtButtons(t *testing.T) {
 	tests := []struct {
-		name      string
-		button    int
-		action    playbackAction
-		seekDelta time.Duration
+		name     string
+		showOpen bool
+		actions  []playbackAction
+		deltas   []time.Duration
 	}{
-		{name: "open", button: 0, action: actionOpen},
-		{name: "play pause", button: 1, action: actionPlayPause},
-		{name: "stop", button: 2, action: actionStop},
-		{name: "back", button: 3, action: actionSeekRelative, seekDelta: -5 * time.Second},
-		{name: "forward", button: 4, action: actionSeekRelative, seekDelta: 5 * time.Second},
-		{name: "loop", button: 5, action: actionToggleLoop},
+		{
+			name:     "with picker",
+			showOpen: true,
+			actions:  []playbackAction{actionOpen, actionPlayPause, actionStop, actionSeekRelative, actionSeekRelative, actionToggleLoop},
+			deltas:   []time.Duration{0, 0, 0, -5 * time.Second, 5 * time.Second, 0},
+		},
+		{
+			name:    "without picker",
+			actions: []playbackAction{actionPlayPause, actionStop, actionSeekRelative, actionSeekRelative, actionToggleLoop},
+			deltas:  []time.Duration{0, 0, -5 * time.Second, 5 * time.Second, 0},
+		},
 	}
 
 	for _, size := range []struct {
@@ -27,26 +32,39 @@ func TestControlAtButtons(t *testing.T) {
 		{name: "landscape", width: 640, height: 360},
 		{name: "portrait", width: 360, height: 640},
 	} {
-		t.Run(size.name, func(t *testing.T) {
-			layout := newControlLayout(size.width, size.height)
-			for _, test := range tests {
-				t.Run(test.name, func(t *testing.T) {
-					button := layout.buttons[test.button]
+		for _, test := range tests {
+			t.Run(size.name+"/"+test.name, func(t *testing.T) {
+				layout := newControlLayout(size.width, size.height, test.showOpen)
+				if layout.buttonCount != len(test.actions) {
+					t.Fatalf("button count = %d, want %d", layout.buttonCount, len(test.actions))
+				}
+				for index, wantAction := range test.actions {
+					button := layout.buttons[index]
 					input := controlAt(layout, button.x+button.width/2, button.y+button.height/2)
-					if input.action != test.action {
-						t.Fatalf("action = %v, want %v", input.action, test.action)
+					if input.action != wantAction {
+						t.Fatalf("button %d action = %v, want %v", index, input.action, wantAction)
 					}
-					if input.seekDelta != test.seekDelta {
-						t.Fatalf("seek delta = %s, want %s", input.seekDelta, test.seekDelta)
+					if input.seekDelta != test.deltas[index] {
+						t.Fatalf("button %d seek delta = %s, want %s", index, input.seekDelta, test.deltas[index])
 					}
-				})
-			}
-		})
+				}
+			})
+		}
+	}
+}
+
+func TestLayoutWithoutPickerDoesNotExposeOpen(t *testing.T) {
+	layout := newControlLayout(640, 360, false)
+	for _, button := range layout.buttons[:layout.buttonCount] {
+		input := controlAt(layout, button.x+button.width/2, button.y+button.height/2)
+		if input.action == actionOpen {
+			t.Fatal("layout without a picker exposed the Open action")
+		}
 	}
 }
 
 func TestControlAtTimeline(t *testing.T) {
-	layout := newControlLayout(360, 640)
+	layout := newControlLayout(360, 640, true)
 	tests := []struct {
 		name string
 		x    int
@@ -71,14 +89,14 @@ func TestControlAtTimeline(t *testing.T) {
 }
 
 func TestControlAtOutsideControls(t *testing.T) {
-	layout := newControlLayout(640, 360)
+	layout := newControlLayout(640, 360, false)
 	if input := controlAt(layout, layout.width-1, layout.height-1); input.action != actionNone {
 		t.Fatalf("action = %v, want no action", input.action)
 	}
 }
 
 func TestControlAtButtonTopEdge(t *testing.T) {
-	layout := newControlLayout(640, 360)
+	layout := newControlLayout(640, 360, true)
 	button := layout.buttons[0]
 	input := controlAt(layout, button.x+button.width/2, button.y)
 	if input.action != actionOpen {
@@ -111,33 +129,40 @@ func TestLogicalSizePreservesOrientationAndAspectRatio(t *testing.T) {
 }
 
 func TestControlLayoutAdaptsToWidth(t *testing.T) {
-	tests := []struct {
-		name          string
-		width, height int
-		stacked       bool
-	}{
-		{name: "landscape", width: 640, height: 360},
-		{name: "portrait", width: 360, height: 640, stacked: true},
-		{name: "square", width: 360, height: 360, stacked: true},
-		{name: "ultrawide", width: 800, height: 360},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			layout := newControlLayout(test.width, test.height)
-			if layout.stacked != test.stacked {
-				t.Fatalf("stacked = %v, want %v", layout.stacked, test.stacked)
-			}
-			if layout.panelY < 20 || layout.timeline.x < 0 || layout.timeline.x+layout.timeline.width > layout.width {
-				t.Fatalf("invalid panel or timeline geometry: %#v", layout)
-			}
-			for i, button := range layout.buttons {
-				if button.x < 0 || button.y < layout.panelY || button.x+button.width > layout.width || button.y+button.height > layout.height {
-					t.Fatalf("button %d outside layout: %#v in %#v", i, button, layout)
+	for _, showOpen := range []bool{false, true} {
+		for _, test := range []struct {
+			name          string
+			width, height int
+			stacked       bool
+		}{
+			{name: "landscape", width: 640, height: 360},
+			{name: "portrait", width: 360, height: 640, stacked: true},
+			{name: "square", width: 360, height: 360, stacked: true},
+			{name: "ultrawide", width: 800, height: 360},
+		} {
+			t.Run(fmtBool(showOpen)+"/"+test.name, func(t *testing.T) {
+				layout := newControlLayout(test.width, test.height, showOpen)
+				if layout.stacked != test.stacked {
+					t.Fatalf("stacked = %v, want %v", layout.stacked, test.stacked)
 				}
-			}
-		})
+				if layout.panelY < 20 || layout.timeline.x < 0 || layout.timeline.x+layout.timeline.width > layout.width {
+					t.Fatalf("invalid panel or timeline geometry: %#v", layout)
+				}
+				for i, button := range layout.buttons[:layout.buttonCount] {
+					if button.x < 0 || button.y < layout.panelY || button.x+button.width > layout.width || button.y+button.height > layout.height {
+						t.Fatalf("button %d outside layout: %#v in %#v", i, button, layout)
+					}
+				}
+			})
+		}
 	}
+}
+
+func fmtBool(value bool) string {
+	if value {
+		return "with picker"
+	}
+	return "without picker"
 }
 
 func TestPlaybackProgress(t *testing.T) {
