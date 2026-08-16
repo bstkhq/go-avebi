@@ -45,7 +45,7 @@ surface separately:
 - complete Windows compilation on `amd64` and `arm64`;
 - Android API 33 package/test compilation and complete `apk-ebiten-builder` APK
   assembly with FFmpeg 8 on `amd64` and `arm64`;
-- iOS 13 device/simulator compilation and Ebitengine XCFramework binding.
+- iOS 13 device/simulator package and test compilation.
 
 Keeping the workflows separate avoids repeating the complete FFmpeg release
 matrix on every operating system. See [platform support](platforms.md) for the
@@ -69,7 +69,8 @@ libraries loaded by go-ffmpeg-ffi.
 
 ## go-ebiten-mcp integration and stress test
 
-The media-player test uses the go-ebiten-mcp Go API to exercise play, pause,
+The media-player test drives the same shared game used by the desktop and
+mobile examples through the go-ebiten-mcp Go API. It exercises play, pause,
 paused seek, resume, stop, natural EOF, replay and looping. It also captures an
 offscreen frame and watches the Go heap, process RSS, goroutine count and open
 file descriptors for suspicious growth.
@@ -79,7 +80,7 @@ AVEBI_MCP_TEST_MEDIA=/path/to/video-with-audio.mp4 \
 AVEBI_MCP_TORTURE_CYCLES=500 \
   ebitenmcp run --x container --screen 1280x720 \
   go test -count=1 \
-  -run '^TestFFmpegMCPIntegrationAndTorture$' -v ./examples/mediaplayer
+  -run '^TestFFmpegMCPIntegrationAndTorture$' -v ./examples/mediaplayer/desktop
 ```
 
 The default is 100 cycles. The thresholds can be adjusted with:
@@ -109,5 +110,5 @@ Android and iOS cross-compilation use the same scripts as CI:
 ./scripts/verify-ios-build.sh iphoneos arm64
 ```
 
-They require the pinned Android NDK or the corresponding Xcode SDK. The mobile
-player example is a nested module at `examples/mobileplayer`.
+They require the pinned Android NDK or the corresponding Xcode SDK. Desktop and
+Android builds of the player live together at `examples/mediaplayer`.
