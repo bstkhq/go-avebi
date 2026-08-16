@@ -4,9 +4,7 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
-	"image/color"
 	"os"
 	"runtime"
 	"runtime/debug"
@@ -19,8 +17,8 @@ import (
 
 	ebitenmcp "github.com/bstkhq/go-ebiten-mcp"
 	"github.com/erparts/go-avebi"
+	mediaplayer "github.com/erparts/go-avebi/examples/mediaplayer"
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
 const mcpTestMediaEnv = "AVEBI_MCP_TEST_MEDIA"
@@ -46,150 +44,21 @@ func TestMain(m *testing.M) {
 			// RunTests needs an initial game before tests begin. Keep that first
 			// instance resource-free; ebitenmcp.T replaces it with the real one.
 			if mcpFactoryCalls.Add(1) == 1 {
-				return &mcpTortureGame{}
+				return mediaplayer.New(mediaplayer.Options{})
 			}
-			game, err := newMCPTortureGame(mcpTestMedia)
-			if err != nil {
-				return &mcpTortureGame{startupErr: err}
-			}
+			game := mediaplayer.New(mediaplayer.Options{})
+			_ = game.Open(mcpTestMedia)
 			return game
 		},
 		ebitenmcp.WithName("avebi-ffmpeg-torture"),
 		ebitenmcp.WithCaptureStage(ebitenmcp.StageOffscreen),
 		ebitenmcp.WithState("player", func(current ebiten.Game) any {
-			return current.(*mcpTortureGame).snapshot()
+			return current.(*mediaplayer.Game).Snapshot()
 		}),
 	)
 }
 
-type mcpTortureGame struct {
-	player     *avebi.Player
-	frame      *ebiten.Image
-	position   time.Duration
-	duration   time.Duration
-	state      avebi.PlaybackState
-	lastErr    error
-	startupErr error
-	closed     bool
-	updates    uint64
-}
-
-type mcpTortureSnapshot struct {
-	State    avebi.PlaybackState
-	Position time.Duration
-	Duration time.Duration
-	FramePTS time.Duration
-	HasEnded bool
-	HasAudio bool
-	Looping  bool
-	Closed   bool
-	Updates  uint64
-	Err      error
-}
-
-func newMCPTortureGame(mediaPath string) (*mcpTortureGame, error) {
-	player, err := avebi.NewPlayer(mediaPath)
-	if err != nil {
-		return nil, err
-	}
-	return &mcpTortureGame{
-		player:   player,
-		duration: player.Duration(),
-		state:    avebi.Stopped,
-	}, nil
-}
-
-func (g *mcpTortureGame) Update() error {
-	g.updates++
-	if g.startupErr != nil {
-		return g.startupErr
-	}
-	if g.closed || g.player == nil {
-		return nil
-	}
-
-	frame, err := g.player.CurrentFrame()
-	if err != nil {
-		g.lastErr = err
-		return err
-	}
-	g.frame = frame
-	g.position, err = g.player.Position()
-	if err != nil {
-		g.lastErr = err
-		return err
-	}
-	g.state, err = g.player.State()
-	if err != nil {
-		g.lastErr = err
-		return err
-	}
-
-	switch {
-	case inpututil.IsKeyJustPressed(ebiten.KeySpace):
-		if g.state == avebi.Playing {
-			err = g.player.Pause()
-		} else {
-			err = g.player.Play()
-		}
-	case inpututil.IsKeyJustPressed(ebiten.KeyS):
-		err = g.player.Stop()
-	case inpututil.IsKeyJustPressed(ebiten.KeyL):
-		g.player.SetLooping(!g.player.GetLooping())
-	case inpututil.IsKeyJustPressed(ebiten.KeyArrowRight):
-		err = g.player.Seek(min(g.duration, g.position+500*time.Millisecond))
-	case inpututil.IsKeyJustPressed(ebiten.KeyArrowLeft):
-		err = g.player.Seek(max(0, g.position-500*time.Millisecond))
-	}
-	if err != nil {
-		g.lastErr = err
-		return err
-	}
-	if err := g.player.Error(); err != nil {
-		g.lastErr = err
-		return err
-	}
-	return nil
-}
-
-func (g *mcpTortureGame) Draw(screen *ebiten.Image) {
-	screen.Fill(color.Black)
-	if g.frame != nil {
-		avebi.Draw(screen, g.frame)
-	}
-}
-
-func (*mcpTortureGame) Layout(int, int) (int, int) { return 640, 360 }
-
-func (g *mcpTortureGame) snapshot() mcpTortureSnapshot {
-	result := mcpTortureSnapshot{
-		State:    g.state,
-		Position: g.position,
-		Duration: g.duration,
-		Closed:   g.closed,
-		Updates:  g.updates,
-		Err:      errors.Join(g.startupErr, g.lastErr),
-	}
-	if g.player != nil {
-		result.FramePTS = g.player.LastPresentationOffset()
-		result.HasEnded = g.player.HasEnded()
-		result.HasAudio = g.player.HasAudio()
-		result.Looping = g.player.GetLooping()
-		result.Err = errors.Join(result.Err, g.player.Error())
-	}
-	return result
-}
-
-func (g *mcpTortureGame) close() error {
-	if g.closed {
-		return nil
-	}
-	g.closed = true
-	if g.player == nil {
-		return nil
-	}
-	return g.player.Close()
-}
+type mcpTortureSnapshot = mediaplayer.Snapshot
 
 func TestFFmpegMCPIntegrationAndTorture(t *testing.T) {
 	if os.Getenv(mcpTestMediaEnv) == "" {
@@ -200,16 +69,13 @@ func TestFFmpegMCPIntegrationAndTorture(t *testing.T) {
 	driver.Timeout = 30 * time.Second
 	t.Cleanup(func() {
 		driver.WithGame(func(current ebiten.Game) {
-			if err := current.(*mcpTortureGame).close(); err != nil {
+			if err := current.(*mediaplayer.Game).Close(); err != nil {
 				t.Errorf("close torture player: %v", err)
 			}
 		})
 	})
 
 	initial := mcpSnapshot(t, driver)
-	if initial.Err != nil {
-		t.Fatalf("start player: %v", initial.Err)
-	}
 	if !initial.HasAudio {
 		t.Fatal("torture media did not select the audio controller")
 	}
@@ -231,6 +97,9 @@ func TestFFmpegMCPIntegrationAndTorture(t *testing.T) {
 func runMCPControlIntegration(t *testing.T, driver *ebitenmcp.Driver) {
 	t.Helper()
 
+	// The example intentionally autoplays. Restart it here so short CI fixtures
+	// cannot reach EOF while go-ebiten-mcp is attaching to the game.
+	driver.Tap(ebiten.KeyS)
 	driver.Tap(ebiten.KeySpace)
 	waitMCPSnapshot(t, driver, 3*time.Second, func(s mcpTortureSnapshot) bool {
 		return s.State == avebi.Playing && s.FramePTS >= 500*time.Millisecond && mcpAVSynced(s)
@@ -248,7 +117,7 @@ func runMCPControlIntegration(t *testing.T, driver *ebitenmcp.Driver) {
 	}
 	driver.Tap(ebiten.KeyArrowRight)
 	seeked := mcpSnapshot(t, driver)
-	wantSeek := min(paused.Position+500*time.Millisecond, paused.Duration)
+	wantSeek := min(paused.Position+time.Second, paused.Duration)
 	if seeked.State != avebi.Paused {
 		t.Fatalf("state after paused seek = %v, want Paused", seeked.State)
 	}
@@ -268,9 +137,7 @@ func runMCPControlIntegration(t *testing.T, driver *ebitenmcp.Driver) {
 	}
 
 	driver.Tap(ebiten.KeySpace)
-	withMCPPlayer(t, driver, func(player *avebi.Player) error {
-		return player.Seek(max(0, player.Duration()-250*time.Millisecond))
-	})
+	seekMCPPlayer(t, driver, max(0, stopped.Duration-250*time.Millisecond))
 	waitMCPSnapshot(t, driver, 5*time.Second, func(s mcpTortureSnapshot) bool {
 		// State and HasEnded are separate synchronized API calls. HasEnded can
 		// advance the playback clock to EOF after State was sampled, so wait
@@ -288,9 +155,7 @@ func runMCPControlIntegration(t *testing.T, driver *ebitenmcp.Driver) {
 
 	driver.Tap(ebiten.KeyL)
 	driver.Tap(ebiten.KeySpace)
-	withMCPPlayer(t, driver, func(player *avebi.Player) error {
-		return player.Seek(max(0, player.Duration()-150*time.Millisecond))
-	})
+	seekMCPPlayer(t, driver, max(0, stopped.Duration-150*time.Millisecond))
 	looped := waitMCPSnapshot(t, driver, 3*time.Second, func(s mcpTortureSnapshot) bool {
 		return s.Looping && s.State == avebi.Playing && s.Position < 500*time.Millisecond && mcpAVSynced(s)
 	})
@@ -399,8 +264,8 @@ func runMCPCycles(t *testing.T, driver *ebitenmcp.Driver, cycles int) {
 
 		if cycle%10 == 0 {
 			snapshot := mcpSnapshot(t, driver)
-			if snapshot.Err != nil {
-				t.Fatalf("cycle %d: %v", cycle, snapshot.Err)
+			if snapshot.Error != "" {
+				t.Fatalf("cycle %d: %s", cycle, snapshot.Error)
 			}
 			if snapshot.State != avebi.Stopped || snapshot.HasEnded {
 				t.Fatalf("cycle %d ended in state %v, ended=%v", cycle, snapshot.State, snapshot.HasEnded)
@@ -416,10 +281,10 @@ func mcpSnapshot(t *testing.T, driver *ebitenmcp.Driver) mcpTortureSnapshot {
 	t.Helper()
 	var result mcpTortureSnapshot
 	driver.WithGame(func(current ebiten.Game) {
-		result = current.(*mcpTortureGame).snapshot()
+		result = current.(*mediaplayer.Game).Snapshot()
 	})
-	if result.Err != nil {
-		t.Fatalf("player state: %v", result.Err)
+	if result.Error != "" {
+		t.Fatalf("player state: %s", result.Error)
 	}
 	return result
 }
@@ -440,19 +305,14 @@ func waitMCPSnapshot(t *testing.T, driver *ebitenmcp.Driver, timeout time.Durati
 	}
 }
 
-func withMCPPlayer(t *testing.T, driver *ebitenmcp.Driver, operation func(*avebi.Player) error) {
+func seekMCPPlayer(t *testing.T, driver *ebitenmcp.Driver, position time.Duration) {
 	t.Helper()
 	var err error
 	driver.WithGame(func(current ebiten.Game) {
-		game := current.(*mcpTortureGame)
-		err = operation(game.player)
-		if err == nil {
-			game.position, _ = game.player.Position()
-			game.state, _ = game.player.State()
-		}
+		err = current.(*mediaplayer.Game).Seek(position)
 	})
 	if err != nil {
-		t.Fatalf("player operation: %v", err)
+		t.Fatalf("seek player: %v", err)
 	}
 }
 
