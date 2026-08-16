@@ -6,17 +6,18 @@ the project [README](../README.md).
 
 ## go-ffmpeg-ffi dependency
 
-The repository depends directly on the validated v1.0.0 release:
+The repository depends directly on the validated v1.1.0 release:
 
 ```text
-github.com/bstkhq/go-ffmpeg-ffi v1.0.0
+github.com/bstkhq/go-ffmpeg-ffi v1.1.0
 ```
 
 The release includes the fixes required by avebi:
 
 - the correct FFmpeg 6 `AVFrame` audio layout;
 - the correct `swr_convert` argument order;
-- runtime ABI selection and validation for FFmpeg 6 through 9.
+- runtime ABI selection and validation for FFmpeg 6 through 9;
+- automatic platform-aware hardware decoding with software fallback.
 
 This is a normal module dependency. Downstream applications do not need a
 `replace` directive.
@@ -35,6 +36,20 @@ This is a normal module dependency. Downstream applications do not need a
 The jobs build the pinned FFmpeg 6.1.6, 7.1.5, 8.1.2 and 9.0.1 release tarballs
 and cache the results. This makes ABI selection deterministic instead of relying
 on the runner's system packages.
+
+`.github/workflows/platform-integration.yml` validates the operating-system
+surface separately:
+
+- native FFmpeg playback tests on Linux `arm64`, macOS `amd64`/`arm64` and
+  Windows `amd64`;
+- complete Windows compilation on `amd64` and `arm64`;
+- Android API 33 package/test compilation and complete `apk-ebiten-builder` APK
+  assembly with FFmpeg 8 on `amd64` and `arm64`;
+- iOS 13 device/simulator compilation and Ebitengine XCFramework binding.
+
+Keeping the workflows separate avoids repeating the complete FFmpeg release
+matrix on every operating system. See [platform support](platforms.md) for the
+evidence represented by each job.
 
 ## Real-media integration tests
 
@@ -86,3 +101,13 @@ go vet ./...
 ```
 
 Run `actionlint` after changing GitHub Actions workflows.
+
+Android and iOS cross-compilation use the same scripts as CI:
+
+```sh
+./scripts/verify-android-build.sh arm64
+./scripts/verify-ios-build.sh iphoneos arm64
+```
+
+They require the pinned Android NDK or the corresponding Xcode SDK. The mobile
+player example is a nested module at `examples/mobileplayer`.

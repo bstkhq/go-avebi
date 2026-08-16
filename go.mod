@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/bstkhq/go-ebiten-mcp v0.1.0
-	github.com/bstkhq/go-ffmpeg-ffi v1.0.0
+	github.com/bstkhq/go-ffmpeg-ffi v1.1.0
 	github.com/hajimehoshi/ebiten/v2 v2.9.9
 )
 

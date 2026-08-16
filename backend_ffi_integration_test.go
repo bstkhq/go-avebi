@@ -1,4 +1,4 @@
-//go:build !ios && !android && (amd64 || arm64)
+//go:build amd64 || arm64
 
 package avebi
 
@@ -114,6 +114,9 @@ func TestFFmpegPlayerWithDisabledAudioMedia(t *testing.T) {
 	width, height := player.Resolution()
 	if width <= 0 || height <= 0 {
 		t.Fatalf("invalid player resolution: %dx%d", width, height)
+	}
+	if player.VideoCodec() == "" {
+		t.Fatal("player reported an empty video codec")
 	}
 	if player.Duration() <= 0 {
 		t.Fatalf("invalid player duration: %s", player.Duration())

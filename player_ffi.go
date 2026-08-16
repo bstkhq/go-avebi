@@ -1,4 +1,4 @@
-//go:build !ios && !android && (amd64 || arm64)
+//go:build amd64 || arm64
 
 package avebi
 
@@ -25,6 +25,7 @@ type Player struct {
 	controller        playbackController
 	currentFrame      *ebiten.Image
 	currentPresOffset time.Duration
+	videoCodec        string
 	onBlackFrame      bool
 }
 
@@ -121,6 +122,7 @@ func newFFmpegPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptio
 	return &Player{
 		controller:   controller,
 		currentFrame: image,
+		videoCodec:   info.Video.Codec,
 		onBlackFrame: true,
 	}, nil
 }
@@ -168,6 +170,10 @@ func (p *Player) Resolution() (int, int) {
 	bounds := p.currentFrame.Bounds()
 	return bounds.Dx(), bounds.Dy()
 }
+
+// VideoCodec returns the short FFmpeg codec name for the selected video
+// stream, such as "h264", "hevc", or "av1".
+func (p *Player) VideoCodec() string { return p.videoCodec }
 
 func (p *Player) State() (PlaybackState, error) { return p.controller.State() }
 func (p *Player) HasEnded() bool                { return p.controller.HasEnded() }

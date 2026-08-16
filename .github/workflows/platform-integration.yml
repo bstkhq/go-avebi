@@ -1,0 +1,312 @@
+name: Platform integration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25.x"
+
+jobs:
+  windows-compile:
+    name: Compile (Windows/${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Compile packages and tests
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+        run: go test -exec /bin/true -run '^$' ./...
+
+  linux-arm64:
+    name: Test (Linux/arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            ffmpeg \
+            libasound2-dev \
+            libgl1-mesa-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxxf86vm-dev \
+            xvfb
+
+      - name: Generate H.264/AAC media
+        run: |
+          mkdir -p .ci-cache/media
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i testsrc2=size=320x180:rate=30 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 3 -c:v libx264 -pix_fmt yuv420p -c:a aac \
+            .ci-cache/media/av-smoke.mp4
+
+      - name: Run tests with native FFmpeg
+        env:
+          AVEBI_TEST_MEDIA: ${{ github.workspace }}/.ci-cache/media/av-smoke.mp4
+        run: xvfb-run -a -s "-screen 0 1280x720x24" go test -count=1 ./...
+
+  macos:
+    name: Test (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS/amd64
+            runner: macos-15-intel
+          - name: macOS/arm64
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install FFmpeg
+        run: brew install ffmpeg
+
+      - name: Generate H.264/AAC media
+        run: |
+          mkdir -p .ci-cache/media
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i testsrc2=size=320x180:rate=30 \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 \
+            -t 3 -c:v libx264 -pix_fmt yuv420p -c:a aac \
+            .ci-cache/media/av-smoke.mp4
+
+      - name: Run tests with native FFmpeg
+        env:
+          AVEBI_TEST_MEDIA: ${{ github.workspace }}/.ci-cache/media/av-smoke.mp4
+        run: go test -count=1 ./...
+
+  windows-amd64:
+    name: Test (Windows/amd64)
+    runs-on: windows-2025
+    timeout-minutes: 25
+    env:
+      FFMPEG_VERSION: "9.0.1"
+      FFMPEG_SHA256: 6fd54b3b4f49117a307877b570f5e1659090f178973298658b41f5c559b5b5ab
+      FFMPEG_URL: https://github.com/GyanD/codexffmpeg/releases/download/9.0.1/ffmpeg-9.0.1-full_build-shared.zip
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Restore FFmpeg shared build
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/ffmpeg-${{ env.FFMPEG_VERSION }}
+          key: ffmpeg-windows-amd64-gyan-${{ env.FFMPEG_VERSION }}-v1
+
+      - name: Install FFmpeg shared build
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .ci-cache | Out-Null
+          $archive = Join-Path $env:GITHUB_WORKSPACE ".ci-cache/ffmpeg.zip"
+          curl.exe --fail --location --retry 3 --output $archive $env:FFMPEG_URL
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($actual -ne $env:FFMPEG_SHA256) {
+            throw "FFmpeg archive checksum mismatch: $actual"
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath .ci-cache
+          Move-Item -LiteralPath ".ci-cache/ffmpeg-$env:FFMPEG_VERSION-full_build-shared" -Destination ".ci-cache/ffmpeg-$env:FFMPEG_VERSION"
+
+      - name: Select FFmpeg runtime
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:GITHUB_WORKSPACE ".ci-cache/ffmpeg-$env:FFMPEG_VERSION/bin"
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "FFMPEG_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Generate H.264/AAC media
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .ci-cache/media | Out-Null
+          ffmpeg -hide_banner -loglevel error -y `
+            -f lavfi -i "testsrc2=size=320x180:rate=30" `
+            -f lavfi -i "sine=frequency=440:sample_rate=48000" `
+            -t 3 -c:v libx264 -pix_fmt yuv420p -c:a aac `
+            .ci-cache/media/av-smoke.mp4
+
+      - name: Run tests with native FFmpeg
+        shell: pwsh
+        env:
+          AVEBI_EXPECT_FFMPEG_MAJOR: "9"
+          AVEBI_TEST_MEDIA: ${{ github.workspace }}\.ci-cache\media\av-smoke.mp4
+        run: go test -count=1 ./...
+
+  android:
+    name: Package (Android API 33/${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    env:
+      ANDROID_API: "33"
+      ANDROID_NDK_VERSION: "26.3.11579264"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check out pinned Android packager
+        uses: actions/checkout@v5
+        with:
+          repository: bstkhq/apk-ebiten-builder
+          ref: a82508d324762dd8f96ea6ccb86b2191185517ab
+          path: .ci-cache/apk-ebiten-builder
+
+      - name: Check out go-ffmpeg-ffi v1.1.0 build tooling
+        uses: actions/checkout@v5
+        with:
+          repository: bstkhq/go-ffmpeg-ffi
+          ref: 78656d98811d2bf36b7410b4393ed7602f5e6eb7
+          path: .ci-cache/go-ffmpeg-ffi
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            examples/mobileplayer/go.sum
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Restore Android FFmpeg build
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/go-ffmpeg-ffi/.build/ffmpeg-android
+          key: ffmpeg-android-8.0.3-api33-ndk26.3-${{ matrix.arch }}-v1
+
+      - name: Install x86 assembler
+        if: matrix.arch == 'amd64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y nasm
+
+      - name: Install pinned Android toolchain
+        run: |
+          sdk_root="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          set +o pipefail
+          yes | "$sdk_root/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          set -o pipefail
+          "$sdk_root/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;$ANDROID_NDK_VERSION"
+
+      - name: Compile avebi packages and tests
+        run: ./scripts/verify-android-build.sh "${{ matrix.arch }}"
+
+      - name: Install pinned Ebitengine mobile binder
+        run: go install github.com/hajimehoshi/ebiten/v2/cmd/ebitenmobile@v2.9.9
+
+      - name: Build FFmpeg 8 for Android
+        run: ./.ci-cache/go-ffmpeg-ffi/scripts/build-ffmpeg-android.sh "${{ matrix.arch }}"
+
+      - name: Package mobile player example
+        run: |
+          case "${{ matrix.arch }}" in
+            arm64) android_abi=arm64-v8a ;;
+            amd64) android_abi=x86_64 ;;
+          esac
+          make -C examples/mobileplayer apk \
+            ANDROID_TARGET="android/${{ matrix.arch }}" \
+            BUILDER_DIR="$GITHUB_WORKSPACE/.ci-cache/apk-ebiten-builder" \
+            FFMPEG_ANDROID_LIB_DIR="$GITHUB_WORKSPACE/.ci-cache/go-ffmpeg-ffi/.build/ffmpeg-android/install/$android_abi/lib"
+          apk="$GITHUB_WORKSPACE/.ci-cache/apk-ebiten-builder/.build/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+
+  ios:
+    name: Compile (iOS 13, device + simulator)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            examples/mobileplayer/go.sum
+
+      - name: Record Xcode toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphonesimulator --show-sdk-version
+
+      - name: Compile avebi for iPhone arm64
+        run: ./scripts/verify-ios-build.sh iphoneos arm64
+
+      - name: Compile avebi for simulator arm64
+        run: ./scripts/verify-ios-build.sh iphonesimulator arm64
+
+      - name: Compile avebi for simulator amd64
+        run: ./scripts/verify-ios-build.sh iphonesimulator amd64
+
+      - name: Install pinned Ebitengine mobile binder
+        run: go install github.com/hajimehoshi/ebiten/v2/cmd/ebitenmobile@v2.9.9
+
+      - name: Bind mobile player example
+        working-directory: examples/mobileplayer
+        run: |
+          mkdir -p .build
+          ebitenmobile bind \
+            -target ios \
+            -iosversion 13.0 \
+            -o .build/Avebi.xcframework .
+          test -d .build/Avebi.xcframework
+
+      - name: Verify XCFramework slices
+        run: |
+          info=examples/mobileplayer/.build/Avebi.xcframework/Info.plist
+          plutil -lint "$info"
+          plutil -convert json -o - "$info" | grep -q 'ios-arm64'
+          plutil -convert json -o - "$info" | grep -q 'ios-arm64_x86_64-simulator'

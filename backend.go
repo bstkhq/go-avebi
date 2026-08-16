@@ -44,6 +44,7 @@ type backendMediaInfo struct {
 type backendVideoInfo struct {
 	Width        int
 	Height       int
+	Codec        string
 	FrameRateNum int
 	FrameRateDen int
 }
