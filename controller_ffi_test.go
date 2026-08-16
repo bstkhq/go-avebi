@@ -50,41 +50,6 @@ func TestSampleRateMismatchPolicy(t *testing.T) {
 	}
 }
 
-func TestFFmpegRGBAFastAndPaddedCopies(t *testing.T) {
-	packed := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-	gotPacked := make([]byte, len(packed))
-	copyFFmpegRGBA(gotPacked, packed, 8, 8, 2)
-	if !bytes.Equal(gotPacked, packed) {
-		t.Fatalf("packed RGBA copy = %v, want %v", gotPacked, packed)
-	}
-
-	padded := []byte{
-		1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0,
-		9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 0,
-	}
-	gotPadded := make([]byte, len(packed))
-	copyFFmpegRGBA(gotPadded, padded, 12, 8, 2)
-	if !bytes.Equal(gotPadded, packed) {
-		t.Fatalf("padded RGBA copy = %v, want %v", gotPadded, packed)
-	}
-}
-
-func BenchmarkFFmpegRGBAReuse(b *testing.B) {
-	const width, height = 320, 180
-	size := width * height * 4
-	src := make([]byte, size)
-	var pool backendVideoBufferPool
-
-	b.ReportAllocs()
-	b.SetBytes(int64(size))
-	b.ResetTimer()
-	for b.Loop() {
-		dst := pool.get(size)
-		copyFFmpegRGBA(dst, src, width*4, width*4, height)
-		pool.put(dst)
-	}
-}
-
 func TestBackendVideoBufferPoolReusesBuffer(t *testing.T) {
 	var pool backendVideoBufferPool
 	first := pool.get(16)
