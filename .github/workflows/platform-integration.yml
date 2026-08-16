@@ -208,9 +208,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: |
-            go.sum
-            examples/mobileplayer/go.sum
+          cache-dependency-path: go.sum
 
       - uses: actions/setup-java@v5
         with:
@@ -255,7 +253,7 @@ jobs:
             arm64) android_abi=arm64-v8a ;;
             amd64) android_abi=x86_64 ;;
           esac
-          make -C examples/mobileplayer apk \
+          make -C examples/mediaplayer/android apk \
             ANDROID_TARGET="android/${{ matrix.arch }}" \
             BUILDER_DIR="$GITHUB_WORKSPACE/.ci-cache/apk-ebiten-builder" \
             FFMPEG_ANDROID_LIB_DIR="$GITHUB_WORKSPACE/.ci-cache/go-ffmpeg-ffi/.build/ffmpeg-android/install/$android_abi/lib"
@@ -272,9 +270,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: |
-            go.sum
-            examples/mobileplayer/go.sum
+          cache-dependency-path: go.sum
 
       - name: Record Xcode toolchain
         run: |
@@ -290,23 +286,3 @@ jobs:
 
       - name: Compile avebi for simulator amd64
         run: ./scripts/verify-ios-build.sh iphonesimulator amd64
-
-      - name: Install pinned Ebitengine mobile binder
-        run: go install github.com/hajimehoshi/ebiten/v2/cmd/ebitenmobile@v2.9.9
-
-      - name: Bind mobile player example
-        working-directory: examples/mobileplayer
-        run: |
-          mkdir -p .build
-          ebitenmobile bind \
-            -target ios \
-            -iosversion 13.0 \
-            -o .build/Avebi.xcframework .
-          test -d .build/Avebi.xcframework
-
-      - name: Verify XCFramework slices
-        run: |
-          info=examples/mobileplayer/.build/Avebi.xcframework/Info.plist
-          plutil -lint "$info"
-          plutil -convert json -o - "$info" | grep -q 'ios-arm64'
-          plutil -convert json -o - "$info" | grep -q 'ios-arm64_x86_64-simulator'
