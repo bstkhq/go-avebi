@@ -8,13 +8,26 @@ It exposes `Open`, `Seek`, `Close`, and `Error` to the native host. Player
 operations are queued so that decoding, audio setup, and drawing remain on the
 Ebitengine update loop.
 
+The on-screen controls provide play/pause, stop, five-second backward and
+forward seeks, looping, a tappable progress bar, and the current position and
+duration. A physical keyboard can use the same controls as the desktop example:
+`Space` or `P` toggles playback, `S` stops, `L` toggles looping, and the arrow
+keys seek by one second. A persistent diagnostics bar reports actual Ebitengine
+TPS and FPS together with the source video resolution and codec.
+
+The layout follows the available aspect ratio instead of assuming a fixed
+device size. Controls use one row on wide screens and two rows on narrow or
+portrait screens, and are recalculated when the device rotates.
+
 ## Android
 
 Android packaging uses
 [`bstkhq/apk-ebiten-builder`](https://github.com/bstkhq/apk-ebiten-builder),
 which generates the Android project, binds the Go package and assembles the
-APK. With the Android SDK, NDK and Java 17 configured, first build the pinned
-FFmpeg Android libraries:
+APK. The example follows the builder's `main` branch by default; set
+`BUILDER_REF` to a commit when a reproducible external build is required. With
+the Android SDK, NDK and Java 17 configured, first build the pinned FFmpeg
+Android libraries:
 
 ```sh
 git clone --branch v1.0.0 --depth 1 \
@@ -37,7 +50,7 @@ needed. Both commands use `apk-ebiten-builder`; the example does not invoke
 `ebitenmobile` directly.
 
 The Android build also discovers the example's optional `FilePickerBridge`.
-Tapping **Open media** launches Android's document picker without requesting a
+Tapping **Open** launches Android's document picker without requesting a
 storage permission. The builder copies the selected document into the
 application cache and returns a local path to Go; the example removes that copy
 when playback closes or another selection replaces it. Applications that

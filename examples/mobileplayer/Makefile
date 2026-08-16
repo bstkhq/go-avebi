@@ -7,14 +7,16 @@ ANDROID_MIN_SDK ?= 33
 
 BUILDER_DIR ?= .build/apk-ebiten-builder
 BUILDER_REPO ?= https://github.com/bstkhq/apk-ebiten-builder
-BUILDER_REF ?= cff86308acb72497129a1f815d05423e4382ca0c
+BUILDER_REF ?= main
 ROOT_DIR ?= $(abspath $(BUILDER_DIR))
 INCLUDE_PATH ?= $(BUILDER_DIR)/Include.mk
 
 # Oto v3.4.0's vendored Oboe header uses memset without including <cstring>.
 CGO_CXXFLAGS := $(strip $(CGO_CXXFLAGS) -include cstring)
+# gomobile builds from generated sources that do not have meaningful VCS data.
+GOFLAGS := $(strip $(GOFLAGS) -buildvcs=false)
 
-export APP_ID CGO_CXXFLAGS
+export APP_ID CGO_CXXFLAGS GOFLAGS
 
 $(INCLUDE_PATH):
 	git clone --no-checkout $(BUILDER_REPO) $(BUILDER_DIR)
