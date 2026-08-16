@@ -178,7 +178,6 @@ applications when that instrumentation is not enabled.
 ## Current limitations
 
 - Live streams are video-only.
-- `NextVideoFrame` is not implemented.
 - Hardware-decoded video is transferred to CPU-accessible frames; zero-copy
   GPU presentation is not implemented.
 - Mobile applications must package their own compatible FFmpeg libraries.
