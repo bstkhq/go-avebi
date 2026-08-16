@@ -1,7 +1,7 @@
 # Platform support
 
 Avebi follows the operating-system and architecture surface of
-[`go-ffmpeg-ffi v1.0.0`](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.0.0).
+[`go-ffmpeg-ffi v1.1.0`](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.1.0).
 Support is evidence-based: compilation, native runtime and physical-device
 qualification are different claims.
 
@@ -12,15 +12,15 @@ qualification are different claims.
 | macOS `amd64`, `arm64` | Native runtime with Homebrew FFmpeg and real H.264/AAC media. | `.dylib` files on the loader path. |
 | Windows `amd64` | Native runtime with the pinned FFmpeg 9.0.1 shared build and real H.264/AAC media. | `.dll` files on `PATH`. |
 | Windows `arm64` | Complete package and test-binary compilation. Native runtime remains unqualified because the project has no public native runner. | ARM64 `.dll` files on `PATH`. |
-| Android `amd64`, `arm64` | API 33 package/test compilation and complete APK assembly through `apk-ebiten-builder`, including FFmpeg 8 shared libraries. | Unversioned `libav*.so` files packaged for each APK ABI. |
+| Android `amd64`, `arm64` | API 33 package/test compilation and complete APK assembly through `apk-ebiten-builder`, including FFmpeg 8 shared libraries. Physical `arm64` validation covers the document picker, MediaCodec H.264 decoding, audible AAC audio, pause, seek, loop, rotation and A/V synchronization. | Unversioned `libav*.so` files packaged for each APK ABI. |
 | iOS device `arm64`; simulator `amd64`, `arm64` | iOS 13 package/test compilation and downstream Ebitengine XCFramework binding. | Signed FFmpeg frameworks embedded in the app, or FFmpeg linked into its process image. |
 
 The Android and iOS jobs prove that the public avebi player, its audio path and
 the `go-ffmpeg-ffi` backend reach the mobile artifact. Android additionally
 assembles an installable APK with FFmpeg through
-[`apk-ebiten-builder`](https://github.com/bstkhq/apk-ebiten-builder). These jobs
-do not by themselves prove audible output, hardware decoding, lifecycle
-behavior, thermal stability or sustained performance on a physical device.
+[`apk-ebiten-builder`](https://github.com/bstkhq/apk-ebiten-builder). The
+physical Android validation supplements CI, but thermal stability and sustained
+performance remain unqualified.
 
 FFmpeg builds decide which codecs, containers, protocols and hardware backends
 are available. A supported operating system does not imply MediaCodec,

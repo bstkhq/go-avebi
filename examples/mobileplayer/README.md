@@ -30,7 +30,7 @@ the Android SDK, NDK and Java 17 configured, first build the pinned FFmpeg
 Android libraries:
 
 ```sh
-git clone --branch v1.0.0 --depth 1 \
+git clone --branch v1.1.0 --depth 1 \
   https://github.com/bstkhq/go-ffmpeg-ffi.git \
   .build/go-ffmpeg-ffi
 .build/go-ffmpeg-ffi/scripts/build-ffmpeg-android.sh arm64
@@ -61,6 +61,8 @@ CI builds:
 - Android APKs containing FFmpeg for `arm64` and `amd64` (x86-64), API 33;
 - an iOS 13 XCFramework with device and simulator slices.
 
-The example renders decoded frames through `avebi.Draw`. CI proves APK
-assembly, but it does not claim physical-device audio or lifecycle
-qualification.
+The example renders decoded frames through `avebi.Draw`. On an Android 14
+`arm64` tablet it has also been exercised with a 1080p60 H.264/AAC file: the
+document picker, active MediaCodec decoder, audible audio, pause, seek, loop,
+rotation and A/V synchronization all worked. This does not qualify sustained
+60 FPS or thermal behavior.

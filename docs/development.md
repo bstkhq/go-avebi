@@ -6,17 +6,18 @@ the project [README](../README.md).
 
 ## go-ffmpeg-ffi dependency
 
-The repository depends directly on the validated v1.0.0 release:
+The repository depends directly on the validated v1.1.0 release:
 
 ```text
-github.com/bstkhq/go-ffmpeg-ffi v1.0.0
+github.com/bstkhq/go-ffmpeg-ffi v1.1.0
 ```
 
 The release includes the fixes required by avebi:
 
 - the correct FFmpeg 6 `AVFrame` audio layout;
 - the correct `swr_convert` argument order;
-- runtime ABI selection and validation for FFmpeg 6 through 9.
+- runtime ABI selection and validation for FFmpeg 6 through 9;
+- automatic platform-aware hardware decoding with software fallback.
 
 This is a normal module dependency. Downstream applications do not need a
 `replace` directive.

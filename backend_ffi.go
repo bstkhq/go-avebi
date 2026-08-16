@@ -66,7 +66,9 @@ func openFFmpegDecoder(ctx context.Context, source string, opts backendOpenOptio
 		return nil, fmt.Errorf("initialize go-ffmpeg-ffi: %w", err)
 	}
 
-	decoderOpts := &ffmpeg.DecoderOptions{}
+	decoderOpts := &ffmpeg.DecoderOptions{
+		Hardware: &ffmpeg.HWDecoderConfig{},
+	}
 	if opts.DisableAudio {
 		decoderOpts.Streams = []ffmpeg.MediaType{ffmpeg.MediaTypeVideo}
 	}

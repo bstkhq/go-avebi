@@ -195,14 +195,14 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: bstkhq/apk-ebiten-builder
-          ref: cff86308acb72497129a1f815d05423e4382ca0c
+          ref: a82508d324762dd8f96ea6ccb86b2191185517ab
           path: .ci-cache/apk-ebiten-builder
 
-      - name: Check out go-ffmpeg-ffi v1.0.0 build tooling
+      - name: Check out go-ffmpeg-ffi v1.1.0 build tooling
         uses: actions/checkout@v5
         with:
           repository: bstkhq/go-ffmpeg-ffi
-          ref: b5e95338f6f2ba48652976aab94cc0571de51b97
+          ref: 78656d98811d2bf36b7410b4393ed7602f5e6eb7
           path: .ci-cache/go-ffmpeg-ffi
 
       - uses: actions/setup-go@v6

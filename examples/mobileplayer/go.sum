@@ -1,5 +1,5 @@
-github.com/bstkhq/go-ffmpeg-ffi v1.0.0 h1:AQVYCOm3si7yuA5kVgehR1mfsG6cWN96ndtqkjVN0cY=
-github.com/bstkhq/go-ffmpeg-ffi v1.0.0/go.mod h1:/lmTjYXTFul0EgnUzRU4EfnUUKQZ2eaY72YnX+oUYos=
+github.com/bstkhq/go-ffmpeg-ffi v1.1.0 h1:+6lz1ux3VG3pJwTozCxgHPXzxcw90KU2oC3axCm9D0U=
+github.com/bstkhq/go-ffmpeg-ffi v1.1.0/go.mod h1:/lmTjYXTFul0EgnUzRU4EfnUUKQZ2eaY72YnX+oUYos=
 github.com/ebitengine/gomobile v0.0.0-20250923094054-ea854a63cce1 h1:+kz5iTT3L7uU+VhlMfTb8hHcxLO3TlaELlX8wa4XjA0=
 github.com/ebitengine/gomobile v0.0.0-20250923094054-ea854a63cce1/go.mod h1:lKJoeixeJwnFmYsBny4vvCJGVFc3aYDalhuDsfZzWHI=
 github.com/ebitengine/hideconsole v1.0.0 h1:5J4U0kXF+pv/DhiXt5/lTz0eO5ogJ1iXb8Yj1yReDqE=

@@ -2,7 +2,7 @@
 
 avebi plays local video and live video streams in
 [Ebitengine](https://ebitengine.org/) applications. It decodes media through
-[go-ffmpeg-ffi](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.0.0),
+[go-ffmpeg-ffi](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.1.0),
 converts video frames to RGBA
 for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
 
@@ -13,6 +13,7 @@ for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
 - Video-only live stream playback with connection and read timeouts.
 - Aspect-ratio-preserving rendering through `avebi.Draw`.
 - Runtime FFmpeg loading through purego.
+- Automatic platform-aware hardware decoding with software fallback.
 
 ## Requirements and compatibility
 
@@ -34,7 +35,7 @@ libraries were built.
 go get github.com/erparts/go-avebi
 ```
 
-Avebi depends directly on go-ffmpeg-ffi v1.0.0. Applications do not need a
+Avebi depends directly on go-ffmpeg-ffi v1.1.0. Applications do not need a
 dependency override. See [development and testing](docs/development.md) for
 the validated changes.
 
@@ -176,7 +177,8 @@ binding.
 
 - Live streams are video-only.
 - `NextVideoFrame` is not implemented.
-- Hardware-accelerated decoding is not enabled by avebi.
+- Hardware-decoded video is transferred to CPU-accessible frames; zero-copy
+  GPU presentation is not implemented.
 - Mobile applications must package their own compatible FFmpeg libraries.
 
 See [development and testing](docs/development.md) for the compatibility matrix,
