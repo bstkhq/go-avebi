@@ -17,7 +17,6 @@ var (
 	ErrNoVideo         = errors.New("file doesn't include any video stream")
 	ErrNilAudioContext = errors.New("file has audio stream but audio.Context is not initialized")
 	ErrBadSampleRate   = errors.New("file audio stream and audio context sample rates don't match")
-	ErrTooManyChannels = errors.New("file audio streams with more than 2 channels are not supported")
 )
 
 // Player is a video player backed by go-ffmpeg-ffi.
@@ -163,8 +162,6 @@ func (p *Player) CurrentFrame() (*ebiten.Image, error) {
 }
 
 func (p *Player) LastPresentationOffset() time.Duration { return p.currentPresOffset }
-
-func (p *Player) NextVideoFrame() (*ebiten.Image, error) { panic("unimplemented") }
 
 func (p *Player) Resolution() (int, int) {
 	bounds := p.currentFrame.Bounds()
