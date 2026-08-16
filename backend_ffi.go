@@ -111,6 +111,7 @@ func mediaInfoFromFFmpeg(decoder *ffmpeg.Decoder) backendMediaInfo {
 		info.Video = &backendVideoInfo{
 			Width:        stream.Width,
 			Height:       stream.Height,
+			Codec:        stream.CodecName,
 			FrameRateNum: int(stream.FrameRate.Num),
 			FrameRateDen: int(stream.FrameRate.Den),
 		}
