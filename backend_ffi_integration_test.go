@@ -59,13 +59,18 @@ func TestFFmpegBackendMedia(t *testing.T) {
 		t.Skip("set AVEBI_TEST_MEDIA to run the FFmpeg integration test")
 	}
 
+	pinnedBefore := ffmpeg.WrappedBufferMemoryUsage()
 	decoder, err := newMediaBackend().Open(context.Background(), mediaPath, backendOpenOptions{
 		OutputSampleRate: 48_000,
 	})
 	if err != nil {
 		t.Fatalf("open media: %v", err)
 	}
+	closed := false
 	t.Cleanup(func() {
+		if closed {
+			return
+		}
 		if err := decoder.Close(); err != nil {
 			t.Errorf("close media: %v", err)
 		}
@@ -93,6 +98,18 @@ func TestFFmpegBackendMedia(t *testing.T) {
 		t.Fatalf("seek to %s: %v", seekTarget, err)
 	}
 	validateFFmpegSeek(t, decoder, seekTarget, wantAudio)
+
+	pinnedDuringDecode := ffmpeg.WrappedBufferMemoryUsage()
+	if pinnedDuringDecode.PinnedBuffers != pinnedBefore.PinnedBuffers+1 {
+		t.Fatalf("wrapped video buffers while decoding = %d, want %d", pinnedDuringDecode.PinnedBuffers, pinnedBefore.PinnedBuffers+1)
+	}
+	if err := decoder.Close(); err != nil {
+		t.Fatalf("close media: %v", err)
+	}
+	closed = true
+	if pinnedAfterClose := ffmpeg.WrappedBufferMemoryUsage(); pinnedAfterClose != pinnedBefore {
+		t.Fatalf("wrapped video buffer usage after Close = %+v, want %+v", pinnedAfterClose, pinnedBefore)
+	}
 }
 
 func TestFFmpegPlayerWithDisabledAudioMedia(t *testing.T) {
