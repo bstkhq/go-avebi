@@ -15,30 +15,6 @@ for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
 - Runtime FFmpeg loading through purego.
 - Automatic platform-aware hardware decoding with software fallback.
 
-## Performance
-
-The H.265 benchmark measures decoding plus conversion to the RGBA buffers used
-by Ebitengine. `CPU` uses the process convention, where 100% represents one
-fully occupied logical CPU.
-
-| Current v1.1.1 mode | x86 | Raspberry Pi 5 | Android SM-X210 |
-|---|---:|---:|---:|
-| Software | 118.3 fps · 101.2% CPU | 52.21 fps · 100.7% CPU | 74.23 fps · 123.0% CPU |
-| Hardware required | 127.4 fps · 86.35% CPU (CUDA) | 123.3 fps · 88.43% CPU (DRM/rpivid) | 109.7 fps · 114.7% CPU (MediaCodec) |
-
-For reference, software decoding in the current version improves on the former
-v0.0.7 Reisen backend as follows:
-
-| Platform | v0.0.7 / Reisen | Current v1.1.1 | Throughput gain |
-|---|---:|---:|---:|
-| x86 | 93.39 fps | 118.3 fps | +26.7% |
-| Raspberry Pi 5 | 36.66 fps | 52.21 fps | +42.4% |
-
-The v1 backend also reduces allocations from approximately 4.616 GiB to
-8.3–8.5 MiB per clip. These are decode and RGBA conversion figures, not
-physical-display frame rates. See the [full benchmark report](BENCHMARK.md) for
-memory, methodology, and stability results.
-
 ## Requirements and compatibility
 
 - Go 1.25 or newer.
@@ -199,6 +175,30 @@ Android host with a file picker adds **Open**. See the
 are instrumented for automated interaction but behave as ordinary Ebitengine
 applications when that instrumentation is not enabled.
 
+## Performance
+
+The H.265 benchmark measures decoding plus conversion to the RGBA buffers used
+by Ebitengine. `CPU` uses the process convention, where 100% represents one
+fully occupied logical CPU.
+
+| Current v1.1.1 mode | x86 | Raspberry Pi 5 | Android SM-X210 |
+|---|---:|---:|---:|
+| Software | 118.3 fps · 101.2% CPU | 52.21 fps · 100.7% CPU | 74.23 fps · 123.0% CPU |
+| Hardware required | 127.4 fps · 86.35% CPU (CUDA) | 123.3 fps · 88.43% CPU (DRM/rpivid) | 109.7 fps · 114.7% CPU (MediaCodec) |
+
+For reference, software decoding in the current version improves on the former
+v0.0.7 Reisen backend as follows:
+
+| Platform | v0.0.7 / Reisen | Current v1.1.1 | Throughput gain |
+|---|---:|---:|---:|
+| x86 | 93.39 fps | 118.3 fps | +26.7% |
+| Raspberry Pi 5 | 36.66 fps | 52.21 fps | +42.4% |
+
+The v1 backend also reduces allocations from approximately 4.616 GiB to
+8.3–8.5 MiB per clip. These are decode and RGBA conversion figures, not
+physical-display frame rates. See the [full benchmark report](BENCHMARK.md) for
+memory, methodology, and stability results.
+
 ## Current limitations
 
 - Live streams are video-only.
@@ -208,3 +208,7 @@ applications when that instrumentation is not enabled.
 
 See [development and testing](docs/development.md) for the compatibility matrix,
 platform checks and stress-test commands.
+
+## License
+
+Avebi is available under the [MIT License](LICENSE).
