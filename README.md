@@ -208,3 +208,7 @@ applications when that instrumentation is not enabled.
 
 See [development and testing](docs/development.md) for the compatibility matrix,
 platform checks and stress-test commands.
+
+## License
+
+Avebi is available under the [MIT License](LICENSE).
