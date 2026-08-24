@@ -86,8 +86,8 @@ type backendVideoFrame struct {
 
 const maxPooledVideoBuffers = 8
 
-// backendVideoBufferPool keeps decoded RGBA storage independent from the native
-// scaler-owned frame, which is overwritten by the next Scale call.
+// backendVideoBufferPool reuses the tightly packed RGBA storage filled by the
+// native scaler and later uploaded to Ebitengine.
 type backendVideoBufferPool struct {
 	mutex   sync.Mutex
 	buffers [][]byte

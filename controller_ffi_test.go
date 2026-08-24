@@ -50,41 +50,6 @@ func TestSampleRateMismatchPolicy(t *testing.T) {
 	}
 }
 
-func TestFFmpegRGBAFastAndPaddedCopies(t *testing.T) {
-	packed := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-	gotPacked := make([]byte, len(packed))
-	copyFFmpegRGBA(gotPacked, packed, 8, 8, 2)
-	if !bytes.Equal(gotPacked, packed) {
-		t.Fatalf("packed RGBA copy = %v, want %v", gotPacked, packed)
-	}
-
-	padded := []byte{
-		1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0,
-		9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 0,
-	}
-	gotPadded := make([]byte, len(packed))
-	copyFFmpegRGBA(gotPadded, padded, 12, 8, 2)
-	if !bytes.Equal(gotPadded, packed) {
-		t.Fatalf("padded RGBA copy = %v, want %v", gotPadded, packed)
-	}
-}
-
-func BenchmarkFFmpegRGBAReuse(b *testing.B) {
-	const width, height = 320, 180
-	size := width * height * 4
-	src := make([]byte, size)
-	var pool backendVideoBufferPool
-
-	b.ReportAllocs()
-	b.SetBytes(int64(size))
-	b.ResetTimer()
-	for b.Loop() {
-		dst := pool.get(size)
-		copyFFmpegRGBA(dst, src, width*4, width*4, height)
-		pool.put(dst)
-	}
-}
-
 func TestBackendVideoBufferPoolReusesBuffer(t *testing.T) {
 	var pool backendVideoBufferPool
 	first := pool.get(16)
@@ -175,12 +140,49 @@ type fakeMediaDecoder struct {
 	closed    bool
 }
 
+type blockingMediaDecoder struct {
+	info        backendMediaInfo
+	frame       backendFrame
+	readStarted chan struct{}
+	releaseRead chan struct{}
+	readOnce    sync.Once
+	releaseOnce sync.Once
+}
+
+func (d *blockingMediaDecoder) Info() backendMediaInfo { return d.info }
+
+func (d *blockingMediaDecoder) ReadFrame(context.Context, *backendVideoBufferPool) (backendFrame, error) {
+	d.readOnce.Do(func() { close(d.readStarted) })
+	<-d.releaseRead
+	return d.frame, nil
+}
+
+func (d *blockingMediaDecoder) release() { d.releaseOnce.Do(func() { close(d.releaseRead) }) }
+
+func (*blockingMediaDecoder) Seek(time.Duration) error { return nil }
+func (*blockingMediaDecoder) Close() error             { return nil }
+
+type audioReadResult struct {
+	n   int
+	err error
+}
+
+func startAudioRead(controller *ffiLocalController) <-chan audioReadResult {
+	done := make(chan audioReadResult, 1)
+	go func() {
+		n, err := controller.Read(make([]byte, 4))
+		done <- audioReadResult{n: n, err: err}
+	}()
+	return done
+}
+
 type fakeFFmpegAudioPlayer struct {
 	playing  bool
 	closed   bool
 	position time.Duration
 	volume   float64
 	buffer   time.Duration
+	onClose  func()
 }
 
 func (p *fakeFFmpegAudioPlayer) Play()                         { p.playing = true }
@@ -190,6 +192,9 @@ func (p *fakeFFmpegAudioPlayer) Position() time.Duration       { return p.positi
 func (p *fakeFFmpegAudioPlayer) SetBufferSize(v time.Duration) { p.buffer = v }
 func (p *fakeFFmpegAudioPlayer) SetVolume(v float64)           { p.volume = v }
 func (p *fakeFFmpegAudioPlayer) Close() error {
+	if p.onClose != nil {
+		p.onClose()
+	}
 	p.closed = true
 	p.playing = false
 	return nil
@@ -215,6 +220,185 @@ func (d *fakeMediaDecoder) Seek(position time.Duration) error {
 func (d *fakeMediaDecoder) Close() error {
 	d.closed = true
 	return nil
+}
+
+func TestFFmpegAudioDecodeDoesNotBlockVideoPlayback(t *testing.T) {
+	decoder := &blockingMediaDecoder{
+		info: backendMediaInfo{
+			Duration: time.Second,
+			Video:    &backendVideoInfo{Width: 2, Height: 2, FrameRateNum: 25, FrameRateDen: 1},
+			Audio:    &backendAudioInfo{SampleRate: 48_000, Channels: 2},
+		},
+		frame: backendFrame{
+			Kind:  backendFrameAudio,
+			Audio: backendAudioFrame{PCM: []byte{1, 2, 3, 4}, SampleRate: 48_000, Channels: 2},
+		},
+		readStarted: make(chan struct{}),
+		releaseRead: make(chan struct{}),
+	}
+	t.Cleanup(decoder.release)
+	controller := newFFmpegLocalController(decoder)
+	controller.state = Playing
+	controller.audioPlayer = &fakeFFmpegAudioPlayer{playing: true}
+	controller.waitingForAudioPTS = false
+
+	readDone := startAudioRead(controller)
+
+	select {
+	case <-decoder.readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("audio read did not enter the decoder")
+	}
+
+	videoDone := make(chan error, 1)
+	go func() {
+		_, _, err := controller.CurrentVideoFrame()
+		videoDone <- err
+	}()
+	select {
+	case err := <-videoDone:
+		if err != nil {
+			t.Fatalf("CurrentVideoFrame: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("CurrentVideoFrame blocked behind an in-flight audio decode")
+	}
+
+	decoder.release()
+	select {
+	case result := <-readDone:
+		if result.n != 4 || result.err != nil {
+			t.Fatalf("audio read = %d, %v; want 4, nil", result.n, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("audio read did not finish")
+	}
+}
+
+func TestFFmpegAudioReadDiscardsFrameDecodedBeforeSeek(t *testing.T) {
+	pixels := make([]byte, 16)
+	decoder := &blockingMediaDecoder{
+		info: backendMediaInfo{
+			Duration: time.Second,
+			Video:    &backendVideoInfo{Width: 2, Height: 2, FrameRateNum: 25, FrameRateDen: 1},
+			Audio:    &backendAudioInfo{SampleRate: 48_000, Channels: 2},
+		},
+		frame: backendFrame{
+			Kind:  backendFrameVideo,
+			Video: backendVideoFrame{RGBA: pixels, Width: 2, Height: 2, Stride: 8},
+		},
+		readStarted: make(chan struct{}),
+		releaseRead: make(chan struct{}),
+	}
+	t.Cleanup(decoder.release)
+	controller := newFFmpegLocalController(decoder)
+	seekStarted := make(chan struct{})
+	controller.audioPlayer = &fakeFFmpegAudioPlayer{onClose: func() { close(seekStarted) }}
+
+	readDone := startAudioRead(controller)
+	select {
+	case <-decoder.readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("audio read did not enter the decoder")
+	}
+
+	seekDone := make(chan error, 1)
+	go func() {
+		_, err := controller.Seek(time.Second)
+		seekDone <- err
+	}()
+	select {
+	case <-seekStarted:
+	case <-time.After(time.Second):
+		t.Fatal("seek did not close the old audio player")
+	}
+
+	decoder.release()
+	select {
+	case err := <-seekDone:
+		if err != nil {
+			t.Fatalf("Seek: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("seek did not finish")
+	}
+	select {
+	case result := <-readDone:
+		if result.n != 0 || !errors.Is(result.err, io.EOF) {
+			t.Fatalf("stale audio read = %d, %v; want 0, io.EOF", result.n, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stale audio read did not finish")
+	}
+
+	if len(controller.videoQueue) != 0 {
+		t.Fatalf("stale video queue contains %d frames", len(controller.videoQueue))
+	}
+	recycled := controller.videoBuffers.get(len(pixels))
+	if &recycled[0] != &pixels[0] {
+		t.Fatal("stale video buffer was not recycled")
+	}
+}
+
+func TestFFmpegAudioReadDoesNotRetainFrameDecodedBeforeClose(t *testing.T) {
+	pixels := make([]byte, 16)
+	decoder := &blockingMediaDecoder{
+		info: backendMediaInfo{
+			Duration: time.Second,
+			Video:    &backendVideoInfo{Width: 2, Height: 2, FrameRateNum: 25, FrameRateDen: 1},
+			Audio:    &backendAudioInfo{SampleRate: 48_000, Channels: 2},
+		},
+		frame: backendFrame{
+			Kind:  backendFrameVideo,
+			Video: backendVideoFrame{RGBA: pixels, Width: 2, Height: 2, Stride: 8},
+		},
+		readStarted: make(chan struct{}),
+		releaseRead: make(chan struct{}),
+	}
+	t.Cleanup(decoder.release)
+	controller := newFFmpegLocalController(decoder)
+	closeStarted := make(chan struct{})
+	controller.audioPlayer = &fakeFFmpegAudioPlayer{onClose: func() { close(closeStarted) }}
+
+	readDone := startAudioRead(controller)
+	select {
+	case <-decoder.readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("audio read did not enter the decoder")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- controller.Close() }()
+	select {
+	case <-closeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not close the audio player")
+	}
+
+	decoder.release()
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish")
+	}
+	select {
+	case result := <-readDone:
+		if result.n != 0 || !errors.Is(result.err, io.EOF) {
+			t.Fatalf("stale audio read = %d, %v; want 0, io.EOF", result.n, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stale audio read did not finish")
+	}
+
+	controller.videoBuffers.mutex.Lock()
+	pooledBuffers := len(controller.videoBuffers.buffers)
+	controller.videoBuffers.mutex.Unlock()
+	if pooledBuffers != 0 {
+		t.Fatalf("closed controller retained %d video buffers", pooledBuffers)
+	}
 }
 
 func TestFFmpegHasEndedDoesNotReadAFrame(t *testing.T) {

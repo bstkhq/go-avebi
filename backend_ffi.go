@@ -41,8 +41,11 @@ type ffiDecoder struct {
 	decoder *ffmpeg.Decoder
 	info    backendMediaInfo
 
-	outputSampleRate  int
-	scaler            *ffmpeg.Scaler
+	outputSampleRate int
+	scaler           *ffmpeg.Scaler
+	// scaleTarget holds FFmpeg's reference to the most recently filled pooled
+	// RGBA buffer. WrapBuffer releases that reference before each reuse.
+	scaleTarget       ffmpeg.Frame
 	scalerWidth       int
 	scalerHeight      int
 	scalerFormat      ffmpeg.PixelFormat
@@ -149,7 +152,6 @@ func (d *ffiDecoder) ReadFrame(ctx context.Context, videoBuffers *backendVideoBu
 		if frame == nil {
 			return backendFrame{}, io.EOF
 		}
-
 		converted, ok, err := d.convertFrameLocked(frame, videoBuffers)
 		if err != nil {
 			return backendFrame{}, err
@@ -199,26 +201,20 @@ func (d *ffiDecoder) convertVideoFrameLocked(frame *ffmpeg.FrameWrapper, videoBu
 		d.scalerFormat = sourceFormat
 	}
 
-	scaled, err := d.scaler.Scale(frame.Raw())
-	if err != nil {
-		return backendFrame{}, false, err
-	}
-	// Scale returns a scaler-owned raw frame that is overwritten by the next
-	// call. WrapFrame exposes its data pointer and stride; copyFFmpegRGBA detaches
-	// it into reusable, tightly packed storage for ebiten.Image.WritePixels.
-	wrapped := ffmpeg.WrapFrame(scaled, ffmpeg.MediaTypeVideo)
-	stride := wrapped.Linesize(0)
 	rowSize := width * 4
-	if stride < rowSize {
-		return backendFrame{}, false, fmt.Errorf("avebi: go-ffmpeg-ffi returned RGBA stride %d for row size %d", stride, rowSize)
-	}
-	data := wrapped.Data(0)
-	if len(data) < stride*height {
-		return backendFrame{}, false, fmt.Errorf("avebi: go-ffmpeg-ffi returned a truncated RGBA frame")
+	rgba := videoBuffers.get(rowSize * height)
+	if err := d.scaleTarget.WrapBuffer(rgba, width, height, ffmpeg.PixelFormatRGBA); err != nil {
+		videoBuffers.put(rgba)
+		return backendFrame{}, false, fmt.Errorf("wrap RGBA output buffer: %w", err)
 	}
 
-	rgba := videoBuffers.get(rowSize * height)
-	copyFFmpegRGBA(rgba, data, stride, rowSize, height)
+	if err := d.scaler.ScaleTo(d.scaleTarget, frame.Raw()); err != nil {
+		// Release the native reference before returning this buffer to the pool.
+		_ = d.scaleTarget.Free()
+		d.scaleTarget = ffmpeg.Frame{}
+		videoBuffers.put(rgba)
+		return backendFrame{}, false, err
+	}
 
 	pts := ffmpegPTS(frame.PTS(), d.decoder.VideoStream().TimeBase)
 	duration := d.info.Video.FrameDuration()
@@ -233,16 +229,6 @@ func (d *ffiDecoder) convertVideoFrameLocked(frame *ffmpeg.FrameWrapper, videoBu
 			Stride: rowSize,
 		},
 	}, true, nil
-}
-
-func copyFFmpegRGBA(dst, src []byte, stride, rowSize, height int) {
-	if stride == rowSize {
-		copy(dst, src[:len(dst)])
-		return
-	}
-	for row := 0; row < height; row++ {
-		copy(dst[row*rowSize:(row+1)*rowSize], src[row*stride:row*stride+rowSize])
-	}
 }
 
 func (d *ffiDecoder) convertAudioFrameLocked(frame *ffmpeg.FrameWrapper) (backendFrame, bool, error) {
@@ -398,6 +384,10 @@ func (d *ffiDecoder) Close() error {
 	if d.scaler != nil {
 		errs = append(errs, d.scaler.Close())
 		d.scaler = nil
+	}
+	if !d.scaleTarget.IsNil() {
+		errs = append(errs, d.scaleTarget.Free())
+		d.scaleTarget = ffmpeg.Frame{}
 	}
 	if d.decoder != nil {
 		errs = append(errs, d.decoder.Close())
