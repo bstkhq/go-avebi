@@ -6,10 +6,10 @@ the project [README](../README.md).
 
 ## go-ffmpeg-ffi dependency
 
-The repository depends directly on the validated v1.1.0 release:
+The repository depends directly on the validated v1.1.1 release:
 
 ```text
-github.com/bstkhq/go-ffmpeg-ffi v1.1.0
+github.com/bstkhq/go-ffmpeg-ffi v1.1.1
 ```
 
 The release includes the fixes required by avebi:

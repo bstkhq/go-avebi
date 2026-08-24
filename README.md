@@ -2,7 +2,7 @@
 
 avebi plays local video and live video streams in
 [Ebitengine](https://ebitengine.org/) applications. It decodes media through
-[go-ffmpeg-ffi](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.1.0),
+[go-ffmpeg-ffi](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.1.1),
 converts video frames to RGBA
 for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
 
@@ -14,6 +14,30 @@ for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
 - Aspect-ratio-preserving rendering through `avebi.Draw`.
 - Runtime FFmpeg loading through purego.
 - Automatic platform-aware hardware decoding with software fallback.
+
+## Performance
+
+The H.265 benchmark measures decoding plus conversion to the RGBA buffers used
+by Ebitengine. `CPU` uses the process convention, where 100% represents one
+fully occupied logical CPU.
+
+| Current v1.1.1 mode | x86 | Raspberry Pi 5 | Android SM-X210 |
+|---|---:|---:|---:|
+| Software | 118.3 fps · 101.2% CPU | 52.21 fps · 100.7% CPU | 74.23 fps · 123.0% CPU |
+| Hardware required | 127.4 fps · 86.35% CPU (CUDA) | 123.3 fps · 88.43% CPU (DRM/rpivid) | 109.7 fps · 114.7% CPU (MediaCodec) |
+
+For reference, software decoding in the current version improves on the former
+v0.0.7 Reisen backend as follows:
+
+| Platform | v0.0.7 / Reisen | Current v1.1.1 | Throughput gain |
+|---|---:|---:|---:|
+| x86 | 93.39 fps | 118.3 fps | +26.7% |
+| Raspberry Pi 5 | 36.66 fps | 52.21 fps | +42.4% |
+
+The v1 backend also reduces allocations from approximately 4.616 GiB to
+8.3–8.5 MiB per clip. These are decode and RGBA conversion figures, not
+physical-display frame rates. See the [full benchmark report](BENCHMARK.md) for
+memory, methodology, and stability results.
 
 ## Requirements and compatibility
 
@@ -35,7 +59,7 @@ libraries were built.
 go get github.com/erparts/go-avebi
 ```
 
-Avebi depends directly on go-ffmpeg-ffi v1.1.0. Applications do not need a
+Avebi depends directly on go-ffmpeg-ffi v1.1.1. Applications do not need a
 dependency override. See [development and testing](docs/development.md) for
 the validated changes.
 
