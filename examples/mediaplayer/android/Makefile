@@ -36,7 +36,7 @@ endif
 
 FFMPEG_FFI_DIR ?= .build/go-ffmpeg-ffi
 FFMPEG_FFI_REPO ?= https://github.com/bstkhq/go-ffmpeg-ffi.git
-FFMPEG_FFI_REF ?= v1.1.1
+FFMPEG_FFI_REF ?= v1.1.2
 ifeq ($(origin FFMPEG_ANDROID_LIB_DIR),undefined)
   FFMPEG_ANDROID_LIB_DIR := $(FFMPEG_FFI_DIR)/.build/ffmpeg-android/install/$(ANDROID_ABI)/lib
   FFMPEG_BUILD_DEPENDENCY := $(FFMPEG_ANDROID_LIB_DIR)/libavcodec.so

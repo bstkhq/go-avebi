@@ -2,7 +2,7 @@
 
 avebi plays local video and live video streams in
 [Ebitengine](https://ebitengine.org/) applications. It decodes media through
-[go-ffmpeg-ffi](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.1.1),
+[go-ffmpeg-ffi](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.1.2),
 converts video frames to RGBA
 for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
 
@@ -35,7 +35,7 @@ libraries were built.
 go get github.com/erparts/go-avebi
 ```
 
-Avebi depends directly on go-ffmpeg-ffi v1.1.1. Applications do not need a
+Avebi depends directly on go-ffmpeg-ffi v1.1.2. Applications do not need a
 dependency override. See [development and testing](docs/development.md) for
 the validated changes.
 

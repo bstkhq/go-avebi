@@ -20,6 +20,11 @@ type ffiBackend struct{}
 var _ mediaBackend = ffiBackend{}
 var _ mediaDecoder = (*ffiDecoder)(nil)
 
+// sharedFFmpegHWDevices lives for the duration of the process so repeated
+// player opens reuse both successful hardware devices and unavailable-backend
+// probe results. Decoders borrow these devices and do not close them.
+var sharedFFmpegHWDevices = ffmpeg.NewHWDeviceManager()
+
 func newMediaBackend() mediaBackend { return ffiBackend{} }
 
 func (ffiBackend) Probe(ctx context.Context, source string, opts backendOpenOptions) (backendMediaInfo, error) {
@@ -69,23 +74,7 @@ func openFFmpegDecoder(ctx context.Context, source string, opts backendOpenOptio
 		return nil, fmt.Errorf("initialize go-ffmpeg-ffi: %w", err)
 	}
 
-	decoderOpts := &ffmpeg.DecoderOptions{
-		Hardware: &ffmpeg.HWDecoderConfig{},
-	}
-	if opts.DisableAudio {
-		decoderOpts.Streams = []ffmpeg.MediaType{ffmpeg.MediaTypeVideo}
-	}
-	if opts.Live {
-		decoderOpts.AVOptions = make(map[string]string)
-		if opts.ConnTimeout > 0 {
-			value := strconv.FormatInt(opts.ConnTimeout.Microseconds(), 10)
-			decoderOpts.AVOptions["timeout"] = value
-			decoderOpts.AVOptions["stimeout"] = value
-		}
-		if opts.ReadTimeout > 0 {
-			decoderOpts.AVOptions["rw_timeout"] = strconv.FormatInt(opts.ReadTimeout.Microseconds(), 10)
-		}
-	}
+	decoderOpts := ffmpegDecoderOptions(opts)
 
 	decoder, err := ffmpeg.NewDecoder(source, decoderOpts)
 	if err != nil {
@@ -108,6 +97,27 @@ func openFFmpegDecoder(ctx context.Context, source string, opts backendOpenOptio
 		info:             info,
 		outputSampleRate: outputSampleRate,
 	}, nil
+}
+
+func ffmpegDecoderOptions(opts backendOpenOptions) *ffmpeg.DecoderOptions {
+	decoderOpts := &ffmpeg.DecoderOptions{
+		Hardware: &ffmpeg.HWDecoderConfig{DeviceManager: sharedFFmpegHWDevices},
+	}
+	if opts.DisableAudio {
+		decoderOpts.Streams = []ffmpeg.MediaType{ffmpeg.MediaTypeVideo}
+	}
+	if opts.Live {
+		decoderOpts.AVOptions = make(map[string]string)
+		if opts.ConnTimeout > 0 {
+			value := strconv.FormatInt(opts.ConnTimeout.Microseconds(), 10)
+			decoderOpts.AVOptions["timeout"] = value
+			decoderOpts.AVOptions["stimeout"] = value
+		}
+		if opts.ReadTimeout > 0 {
+			decoderOpts.AVOptions["rw_timeout"] = strconv.FormatInt(opts.ReadTimeout.Microseconds(), 10)
+		}
+	}
+	return decoderOpts
 }
 
 func mediaInfoFromFFmpeg(decoder *ffmpeg.Decoder) backendMediaInfo {

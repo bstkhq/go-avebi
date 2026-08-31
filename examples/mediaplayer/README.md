@@ -47,7 +47,7 @@ cd examples/mediaplayer/android
 make apk ANDROID_TARGET=android/arm64
 ```
 
-On the first build, the Makefile clones `go-ffmpeg-ffi` v1.1.1 and builds its
+On the first build, the Makefile clones `go-ffmpeg-ffi` v1.1.2 and builds its
 pinned FFmpeg release. Later builds reuse that output. Set
 `FFMPEG_ANDROID_LIB_DIR` to use an existing compatible library directory
 instead. Use `ANDROID_TARGET=android/amd64` for an x86-64 emulator. `make
