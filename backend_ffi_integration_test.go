@@ -16,6 +16,17 @@ import (
 
 const expectedFFmpegMajorEnv = "AVEBI_EXPECT_FFMPEG_MAJOR"
 
+func TestFFmpegDecoderOptionsReuseHardwareDeviceManager(t *testing.T) {
+	first := ffmpegDecoderOptions(backendOpenOptions{})
+	second := ffmpegDecoderOptions(backendOpenOptions{DisableAudio: true})
+	if first.Hardware == nil || first.Hardware.DeviceManager == nil {
+		t.Fatal("default decoder options do not configure a hardware device manager")
+	}
+	if second.Hardware == nil || second.Hardware.DeviceManager != first.Hardware.DeviceManager {
+		t.Fatal("decoder options do not reuse the process-wide hardware device manager")
+	}
+}
+
 func TestFFmpegRuntimeMajor(t *testing.T) {
 	value := os.Getenv(expectedFFmpegMajorEnv)
 	if value == "" {

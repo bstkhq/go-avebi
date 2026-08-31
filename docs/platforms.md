@@ -1,7 +1,7 @@
 # Platform support
 
 Avebi follows the operating-system and architecture surface of
-[`go-ffmpeg-ffi v1.1.1`](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.1.1).
+[`go-ffmpeg-ffi v1.1.2`](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.1.2).
 Support is evidence-based: compilation, native runtime and physical-device
 qualification are different claims.
 
