@@ -16,6 +16,7 @@ import (
 // in the shared player.
 type Options struct {
 	TerminateOnEscape bool
+	UseYUVShader      bool
 }
 
 // Snapshot is a stable view of the player for diagnostics and integration
@@ -38,6 +39,7 @@ type Snapshot struct {
 	VideoWidth  int                 `json:"video_width"`
 	VideoHeight int                 `json:"video_height"`
 	VideoCodec  string              `json:"video_codec"`
+	YUVShader   bool                `json:"yuv_shader"`
 	Updates     uint64              `json:"updates"`
 	Error       string              `json:"error,omitempty"`
 }
@@ -64,6 +66,7 @@ type Game struct {
 	seekPending   bool
 	closePending  bool
 	ownedPath     string
+	sourcePath    string
 	lastError     error
 	position      time.Duration
 	duration      time.Duration
@@ -225,6 +228,7 @@ func (g *Game) Snapshot() Snapshot {
 		VideoWidth:  g.videoWidth,
 		VideoHeight: g.videoHeight,
 		VideoCodec:  g.videoCodec,
+		YUVShader:   g.opts.UseYUVShader,
 		Updates:     g.updates,
 	}
 	if g.lastError != nil {
@@ -300,7 +304,9 @@ func (g *Game) openLocked(path string, owned bool) error {
 		}
 		return err
 	}
-	mediaPlayer, err := avebi.NewPlayer(path)
+	mediaPlayer, err := avebi.NewPlayerWithOptions(path, &avebi.PlayerOptions{
+		UseYUVShader: g.opts.UseYUVShader,
+	})
 	if err != nil {
 		if owned {
 			_ = os.Remove(path)
@@ -316,6 +322,7 @@ func (g *Game) openLocked(path string, owned bool) error {
 	}
 
 	g.player = mediaPlayer
+	g.sourcePath = path
 	g.duration = mediaPlayer.Duration()
 	g.state = avebi.Playing
 	g.hasAudio = mediaPlayer.HasAudio()
@@ -338,6 +345,7 @@ func (g *Game) closeLocked() error {
 	}
 	g.player = nil
 	g.frame = nil
+	g.sourcePath = ""
 	g.resetPlaybackStateLocked()
 	g.removeOwnedPathLocked()
 	return err

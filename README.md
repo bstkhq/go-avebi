@@ -3,8 +3,8 @@
 avebi plays local video and live video streams in
 [Ebitengine](https://ebitengine.org/) applications. It decodes media through
 [go-ffmpeg-ffi](https://github.com/bstkhq/go-ffmpeg-ffi/releases/tag/v1.1.2),
-converts video frames to RGBA
-for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
+presents decoded video through `ebiten.Image`, and feeds decoded audio to
+Ebitengine's audio context.
 
 ## Features
 
@@ -14,6 +14,7 @@ for `ebiten.Image`, and feeds decoded audio to Ebitengine's audio context.
 - Aspect-ratio-preserving rendering through `avebi.Draw`.
 - Runtime FFmpeg loading through purego.
 - Automatic platform-aware hardware decoding with software fallback.
+- Optional GPU YUV-to-RGB conversion for 8-bit 4:2:0 video.
 
 ## Requirements and compatibility
 
@@ -138,6 +139,20 @@ The player also exposes `Pause`, `Stop`, `Seek`, `Position`, `Duration`,
 `State`, `HasEnded`, loop controls, and volume/mute controls. Use
 `NewPlayerWithOptions` for further audio options.
 
+For supported YUV420P, YUVJ420P and NV12 video, color conversion can run in an
+Ebitengine shader instead of FFmpeg's CPU scaler:
+
+```go
+player, err := avebi.NewPlayerWithOptions(path, &avebi.PlayerOptions{
+	UseYUVShader: true,
+})
+```
+
+Unsupported pixel formats automatically fall back to the RGBA path. The shader
+uses explicit BT.709, FCC, BT.470BG, SMPTE 170M, SMPTE 240M and BT.2020
+non-constant-luminance matrix metadata. Missing or unsupported matrix metadata
+also falls back to RGBA instead of guessing a conversion.
+
 If the media and Ebitengine audio context use different sample rates,
 `NewPlayer` converts the audio and reports the mismatch through the package
 logger. Applications that prefer to reject the media can opt out:
@@ -202,8 +217,17 @@ memory, methodology, and stability results.
 ## Current limitations
 
 - Live streams are video-only.
-- Hardware-decoded video is transferred to CPU-accessible frames; zero-copy
-  GPU presentation is not implemented.
+- Hardware-decoded video is transferred to CPU-accessible frames. The optional
+  shader uploads YUV instead of RGBA, but zero-copy GPU presentation is not
+  implemented.
+- The shader uses nearest-neighbor chroma upsampling. Saturated color edges can
+  therefore show 2x2 chroma blocks that the bilinear RGBA path smooths.
+- Packed 4:2:0 storage makes the shader texture 1.5 times the video height, so
+  the maximum supported video height is roughly two-thirds of the GPU's maximum
+  texture dimension. The RGBA fallback does not have this height overhead.
+- Packed YUV is uploaded as opaque byte storage through `WritePixels`; this
+  relies on Ebitengine preserving channel bytes even when they are not valid
+  premultiplied-alpha colors.
 - Mobile applications must package their own compatible FFmpeg libraries.
 
 See [development and testing](docs/development.md) for the compatibility matrix,

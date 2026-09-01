@@ -84,7 +84,7 @@ AVEBI_MCP_TORTURE_CYCLES=500 \
   -run '^TestFFmpegMCPIntegrationAndTorture$' -v ./examples/mediaplayer/desktop
 ```
 
-The default is 100 cycles. The thresholds can be adjusted with:
+The default is 100 control cycles. The thresholds can be adjusted with:
 
 - `AVEBI_MCP_MAX_HEAP_GROWTH_MB`
 - `AVEBI_MCP_MAX_RSS_GROWTH_MB`

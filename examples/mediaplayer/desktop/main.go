@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -15,12 +16,17 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Printf("Usage: go run ./examples/mediaplayer/desktop path/to/video.mp4\n")
+	useYUVShader := flag.Bool("yuv-shader", false, "convert supported YUV video with an Ebitengine shader")
+	flag.Usage = func() {
+		fmt.Printf("Usage: go run ./examples/mediaplayer/desktop [--yuv-shader] path/to/video.mp4\n")
+	}
+	flag.Parse()
+	if flag.NArg() != 1 {
+		flag.Usage()
 		os.Exit(1)
 	}
 
-	path, err := filepath.Abs(os.Args[1])
+	path, err := filepath.Abs(flag.Arg(0))
 	if err != nil {
 		panic(err)
 	}
@@ -32,7 +38,10 @@ func main() {
 		panic(err)
 	}
 
-	game := mediaplayer.New(mediaplayer.Options{TerminateOnEscape: true})
+	game := mediaplayer.New(mediaplayer.Options{
+		TerminateOnEscape: true,
+		UseYUVShader:      *useYUVShader,
+	})
 	if err := game.Open(path); err != nil {
 		panic(err)
 	}

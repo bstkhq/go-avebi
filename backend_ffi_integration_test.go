@@ -128,8 +128,25 @@ func TestFFmpegPlayerWithDisabledAudioMedia(t *testing.T) {
 	if mediaPath == "" {
 		t.Skip("set AVEBI_TEST_MEDIA to run the FFmpeg integration test")
 	}
+	for _, test := range []struct {
+		name      string
+		yuvShader bool
+	}{
+		{name: "RGBA"},
+		{name: "YUV shader", yuvShader: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testFFmpegPlayerWithDisabledAudioMedia(t, mediaPath, test.yuvShader)
+		})
+	}
+}
 
-	player, err := NewPlayerWithOptions(mediaPath, &PlayerOptions{DisableAudio: true})
+func testFFmpegPlayerWithDisabledAudioMedia(t *testing.T, mediaPath string, yuvShader bool) {
+	t.Helper()
+	player, err := NewPlayerWithOptions(mediaPath, &PlayerOptions{
+		DisableAudio: true,
+		UseYUVShader: yuvShader,
+	})
 	if err != nil {
 		t.Fatalf("NewPlayerWithOptions: %v", err)
 	}
@@ -302,8 +319,8 @@ func readAndValidateFFmpegFrames(t *testing.T, decoder mediaDecoder, wantAudio b
 		switch frame.Kind {
 		case backendFrameVideo:
 			wantBytes := frame.Video.Width * frame.Video.Height * 4
-			if frame.Video.Stride != frame.Video.Width*4 || len(frame.Video.RGBA) != wantBytes {
-				t.Fatalf("invalid RGBA frame: %dx%d stride=%d bytes=%d", frame.Video.Width, frame.Video.Height, frame.Video.Stride, len(frame.Video.RGBA))
+			if len(frame.Video.RGBA) != wantBytes {
+				t.Fatalf("invalid RGBA frame: %dx%d bytes=%d", frame.Video.Width, frame.Video.Height, len(frame.Video.RGBA))
 			}
 			gotVideo = true
 		case backendFrameAudio:

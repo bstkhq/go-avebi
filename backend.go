@@ -30,6 +30,7 @@ type mediaDecoder interface {
 type backendOpenOptions struct {
 	DisableAudio     bool
 	OutputSampleRate int
+	UseYUVShader     bool
 	Live             bool
 	ConnTimeout      time.Duration
 	ReadTimeout      time.Duration
@@ -78,16 +79,47 @@ type backendFrame struct {
 }
 
 type backendVideoFrame struct {
-	RGBA   []byte
-	Width  int
-	Height int
-	Stride int
+	RGBA []byte
+	YUV  []byte
+	// YUVTextureW and YUVTextureH describe the packed byte-storage texture,
+	// not the decoded video's display dimensions. Four YUV bytes are stored in
+	// each RGBA texel and the chroma rows follow the luma rows.
+	YUVTextureW int
+	YUVTextureH int
+	Format      backendVideoFormat
+	Color       backendVideoColor
+	Width       int
+	Height      int
+}
+
+func packedYUVTextureSize(width, height int) (int, int) {
+	packedStride := (width + 3) &^ 3
+	return packedStride / 4, height + (height+1)/2
+}
+
+type backendVideoFormat uint8
+
+const (
+	backendVideoFormatRGBA backendVideoFormat = iota
+	backendVideoFormatYUV420P
+	backendVideoFormatNV12
+)
+
+type backendVideoColor struct {
+	YScale  float32
+	YOffset float32
+	UVScale float32
+	UVZero  float32
+	RCr     float32
+	GCb     float32
+	GCr     float32
+	BCb     float32
 }
 
 const maxPooledVideoBuffers = 8
 
-// backendVideoBufferPool reuses the tightly packed RGBA storage filled by the
-// native scaler and later uploaded to Ebitengine.
+// backendVideoBufferPool reuses tightly packed RGBA or YUV storage filled by
+// the decoder and later uploaded to Ebitengine.
 type backendVideoBufferPool struct {
 	mutex   sync.Mutex
 	buffers [][]byte
@@ -158,7 +190,11 @@ func recycleBackendFrame(pool *backendVideoBufferPool, frame *backendFrame) {
 		return
 	}
 	if frame.Kind == backendFrameVideo {
-		pool.put(frame.Video.RGBA)
+		if frame.Video.YUV != nil {
+			pool.put(frame.Video.YUV)
+		} else {
+			pool.put(frame.Video.RGBA)
+		}
 	}
 	*frame = backendFrame{}
 }
