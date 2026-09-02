@@ -93,7 +93,9 @@ func (g *game) Update() error {
 
 func (g *game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.Black)
-	avebi.Draw(screen, g.frame)
+	if g.frame != nil {
+		avebi.Draw(screen, g.frame)
+	}
 }
 
 func (g *game) Layout(outsideWidth, outsideHeight int) (int, int) {
