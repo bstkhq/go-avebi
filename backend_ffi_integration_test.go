@@ -169,8 +169,12 @@ func testFFmpegPlayerWithDisabledAudioMedia(t *testing.T, mediaPath string, yuvS
 	if player.HasAudio() {
 		t.Fatal("player with disabled audio reported an audio stream")
 	}
-	if _, err := player.CurrentFrame(); err != nil {
+	frame, err := player.CurrentFrame()
+	if err != nil {
 		t.Fatalf("CurrentFrame while stopped: %v", err)
+	}
+	if frame != nil {
+		t.Fatal("stopped player returned the black placeholder as a current frame")
 	}
 	if player.LastPresentationOffset() != 0 {
 		t.Fatalf("stopped player decoded a frame at %s", player.LastPresentationOffset())
@@ -180,8 +184,15 @@ func testFFmpegPlayerWithDisabledAudioMedia(t *testing.T, mediaPath string, yuvS
 		t.Fatalf("Play: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	if _, err := player.CurrentFrame(); err != nil {
+	frame, err = player.CurrentFrame()
+	if err != nil {
 		t.Fatalf("CurrentFrame while playing: %v", err)
+	}
+	if frame == nil {
+		t.Fatal("playing player did not return its decoded video frame")
+	}
+	if numerator, denominator := player.VideoFrameRate(); numerator <= 0 || denominator <= 0 {
+		t.Fatalf("invalid video frame rate: %d/%d", numerator, denominator)
 	}
 
 	target := min(time.Second, player.Duration()/2)
@@ -197,6 +208,13 @@ func testFFmpegPlayerWithDisabledAudioMedia(t *testing.T, mediaPath string, yuvS
 	}
 	if ended := player.HasEnded(); ended {
 		t.Fatal("manual Stop was reported as a natural end")
+	}
+	frame, err = player.CurrentFrame()
+	if err != nil {
+		t.Fatalf("CurrentFrame after Stop: %v", err)
+	}
+	if frame != nil {
+		t.Fatal("stopped player retained a decoded video frame")
 	}
 }
 

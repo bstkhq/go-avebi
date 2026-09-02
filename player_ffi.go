@@ -26,6 +26,8 @@ type Player struct {
 	currentFrame      *ebiten.Image
 	currentPresOffset time.Duration
 	videoCodec        string
+	videoFrameRateNum int
+	videoFrameRateDen int
 	onBlackFrame      bool
 	yuvShader         *ebiten.Shader
 	yuvImage          *ebiten.Image
@@ -141,10 +143,12 @@ func newFFmpegPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptio
 	)
 	frameImage.Fill(color.Black)
 	player := &Player{
-		controller:   controller,
-		currentFrame: frameImage,
-		videoCodec:   info.Video.Codec,
-		onBlackFrame: true,
+		controller:        controller,
+		currentFrame:      frameImage,
+		videoCodec:        info.Video.Codec,
+		videoFrameRateNum: info.Video.FrameRateNum,
+		videoFrameRateDen: info.Video.FrameRateDen,
+		onBlackFrame:      true,
 	}
 	if opts.UseYUVShader {
 		shader, err := loadYUV420Shader()
@@ -178,12 +182,17 @@ func checkSampleRateMismatch(info backendMediaInfo, outputSampleRate int, option
 	return nil
 }
 
+// CurrentFrame returns the current decoded video frame. It returns nil before
+// the first frame is decoded and after Stop is called.
 func (p *Player) CurrentFrame() (*ebiten.Image, error) {
 	frame, _, err := p.controller.CurrentVideoFrame()
 	if err != nil {
 		return nil, err
 	}
 	if frame == nil {
+		if p.onBlackFrame {
+			return nil, nil
+		}
 		return p.currentFrame, nil
 	}
 	if frame.PTS != p.currentPresOffset || p.onBlackFrame {
@@ -205,6 +214,12 @@ func (p *Player) Resolution() (int, int) {
 // VideoCodec returns the short FFmpeg codec name for the selected video
 // stream, such as "h264", "hevc", or "av1".
 func (p *Player) VideoCodec() string { return p.videoCodec }
+
+// VideoFrameRate returns the selected video stream's average frame rate as a
+// rational number. Both values are zero when the media does not report one.
+func (p *Player) VideoFrameRate() (numerator, denominator int) {
+	return p.videoFrameRateNum, p.videoFrameRateDen
+}
 
 func (p *Player) State() (PlaybackState, error) { return p.controller.State() }
 func (p *Player) HasEnded() bool                { return p.controller.HasEnded() }
