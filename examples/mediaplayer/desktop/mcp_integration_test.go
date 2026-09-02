@@ -101,9 +101,12 @@ func runMCPControlIntegration(t *testing.T, driver *ebitenmcp.Driver) {
 	// cannot reach EOF while go-ebiten-mcp is attaching to the game.
 	driver.Tap(ebiten.KeyS)
 	driver.Tap(ebiten.KeySpace)
-	waitMCPSnapshot(t, driver, 3*time.Second, func(s mcpTortureSnapshot) bool {
+	playing := waitMCPSnapshot(t, driver, 3*time.Second, func(s mcpTortureSnapshot) bool {
 		return s.State == avebi.Playing && s.FramePTS >= 500*time.Millisecond && mcpAVSynced(s)
 	})
+	if playing.YUVShader {
+		t.Fatal("media-player example did not start on its default RGBA path")
+	}
 	sampleMCPAVSync(t, driver, 750*time.Millisecond)
 	playingImage := driver.Screenshot()
 	if !hasNonBlackPixels(playingImage.Pix) {
@@ -219,6 +222,11 @@ func runMCPTorture(t *testing.T, driver *ebitenmcp.Driver) {
 	end := sampleMCPProcess(t, driver)
 
 	t.Logf("torture cycles=%d base={%s} middle={%s} end={%s}", cycles, base, middle, end)
+	assertMCPProcessGrowth(t, driver, base, middle, end)
+}
+
+func assertMCPProcessGrowth(t *testing.T, driver *ebitenmcp.Driver, base, middle, end processSample) {
+	t.Helper()
 	maxHeap := uint64(envPositiveInt(t, "AVEBI_MCP_MAX_HEAP_GROWTH_MB", 16)) << 20
 	maxRSS := uint64(envPositiveInt(t, "AVEBI_MCP_MAX_RSS_GROWTH_MB", 64)) << 20
 	maxGoroutines := envPositiveInt(t, "AVEBI_MCP_MAX_GOROUTINE_GROWTH", 8)

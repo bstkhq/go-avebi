@@ -153,6 +153,7 @@ jobs:
         env:
           AVEBI_MCP_TEST_MEDIA: ${{ github.workspace }}/.ci-cache/media/av-smoke.mp4
           AVEBI_MCP_TORTURE_CYCLES: "100"
+          AVEBI_MCP_YUV_TOGGLE_CYCLES: "20"
         run: >-
           xvfb-run -a -s "-screen 0 1280x720x24"
           go test -count=1

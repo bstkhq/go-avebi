@@ -9,7 +9,8 @@ game.
 
 The on-screen controls provide play/pause, stop, five-second backward and
 forward seeks, looping, a tappable progress bar, and the current position and
-duration. **Open** appears only when a platform registers a file picker.
+duration. **Open** appears only when a platform registers a file picker. RGBA
+is the default so the example continues to cover the library's default path.
 
 A persistent diagnostics bar reports actual Ebitengine TPS and FPS together
 with the source video resolution and codec. The layout follows the available
@@ -23,6 +24,8 @@ Run the desktop build with:
 ```sh
 go run ./examples/mediaplayer/desktop /path/to/video.mp4
 ```
+
+Pass `--yuv-shader` before the media path to start on the shader path.
 
 The desktop UI does not show **Open** because its media path comes from the
 command line. `Space` or `P` toggles playback, `S` stops, `L` toggles looping,

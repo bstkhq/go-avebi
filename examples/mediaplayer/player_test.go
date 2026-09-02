@@ -50,3 +50,10 @@ func TestFilePickerControlsOpenVisibility(t *testing.T) {
 		t.Fatalf("buttons with picker = %d, want 6", layout.buttonCount)
 	}
 }
+
+func TestYUVShaderOptionIsVisibleWithoutMedia(t *testing.T) {
+	Game := New(Options{UseYUVShader: true})
+	if !Game.Snapshot().YUVShader {
+		t.Fatal("YUV shader option missing from snapshot")
+	}
+}

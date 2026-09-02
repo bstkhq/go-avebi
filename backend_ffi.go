@@ -47,6 +47,7 @@ type ffiDecoder struct {
 	info    backendMediaInfo
 
 	outputSampleRate int
+	useYUVShader     bool
 	scaler           *ffmpeg.Scaler
 	// scaleTarget holds FFmpeg's reference to the most recently filled pooled
 	// RGBA buffer. WrapBuffer releases that reference before each reuse.
@@ -96,6 +97,7 @@ func openFFmpegDecoder(ctx context.Context, source string, opts backendOpenOptio
 		decoder:          decoder,
 		info:             info,
 		outputSampleRate: outputSampleRate,
+		useYUVShader:     opts.UseYUVShader,
 	}, nil
 }
 
@@ -192,6 +194,11 @@ func (d *ffiDecoder) convertVideoFrameLocked(frame *ffmpeg.FrameWrapper, videoBu
 		width, height = d.info.Video.Width, d.info.Video.Height
 	}
 	sourceFormat := frame.PixelFormat()
+	if d.useYUVShader {
+		if converted, ok := d.packYUVFrame(frame, videoBuffers, width, height, sourceFormat); ok {
+			return converted, true, nil
+		}
+	}
 	if d.scaler == nil || d.scalerWidth != width || d.scalerHeight != height || d.scalerFormat != sourceFormat {
 		if d.scaler != nil {
 			_ = d.scaler.Close()
@@ -236,9 +243,148 @@ func (d *ffiDecoder) convertVideoFrameLocked(frame *ffmpeg.FrameWrapper, videoBu
 			RGBA:   rgba,
 			Width:  width,
 			Height: height,
-			Stride: rowSize,
 		},
 	}, true, nil
+}
+
+func (d *ffiDecoder) packYUVFrame(frame *ffmpeg.FrameWrapper, videoBuffers *backendVideoBufferPool, width, height int, sourceFormat ffmpeg.PixelFormat) (backendFrame, bool) {
+	format := backendVideoFormatRGBA
+	switch sourceFormat {
+	case ffmpeg.PixelFormatYUV420P, ffmpeg.PixelFormatYUVJ420P:
+		format = backendVideoFormatYUV420P
+	case ffmpeg.PixelFormatNV12:
+		format = backendVideoFormatNV12
+	default:
+		return backendFrame{}, false
+	}
+
+	colorSpec := frame.Raw().ColorSpec()
+	if sourceFormat == ffmpeg.PixelFormatYUVJ420P {
+		colorSpec.Range = ffmpeg.ColorRangeJPEG
+	}
+	if !yuvShaderSupportsColorSpace(colorSpec.Space) {
+		return backendFrame{}, false
+	}
+
+	chromaWidth := (width + 1) / 2
+	chromaHeight := (height + 1) / 2
+	textureWidth, packedHeight := packedYUVTextureSize(width, height)
+	packedStride := 4 * textureWidth
+	yuv := videoBuffers.get(packedStride * packedHeight)
+	if err := copyFramePlane(yuv, packedStride, 0, frame, 0, width, height); err != nil {
+		videoBuffers.put(yuv)
+		return backendFrame{}, false
+	}
+	chroma := yuv[packedStride*height:]
+	if format == backendVideoFormatYUV420P {
+		if err := copyFramePlane(chroma, packedStride, 0, frame, 1, chromaWidth, chromaHeight); err != nil {
+			videoBuffers.put(yuv)
+			return backendFrame{}, false
+		}
+		if err := copyFramePlane(chroma, packedStride, chromaWidth, frame, 2, chromaWidth, chromaHeight); err != nil {
+			videoBuffers.put(yuv)
+			return backendFrame{}, false
+		}
+	} else if err := copyFramePlane(chroma, packedStride, 0, frame, 1, 2*chromaWidth, chromaHeight); err != nil {
+		videoBuffers.put(yuv)
+		return backendFrame{}, false
+	}
+
+	pts := ffmpegPTS(frame.PTS(), d.decoder.VideoStream().TimeBase)
+	return backendFrame{
+		Kind:     backendFrameVideo,
+		PTS:      pts,
+		Duration: d.info.Video.FrameDuration(),
+		Video: backendVideoFrame{
+			YUV:         yuv,
+			YUVTextureW: textureWidth,
+			YUVTextureH: packedHeight,
+			Format:      format,
+			Color:       yuvColorParameters(colorSpec),
+			Width:       width,
+			Height:      height,
+		},
+	}, true
+}
+
+func yuvShaderSupportsColorSpace(space ffmpeg.ColorSpace) bool {
+	switch space {
+	case ffmpeg.ColorSpaceBT709,
+		ffmpeg.ColorSpaceFCC,
+		ffmpeg.ColorSpaceBT470BG,
+		ffmpeg.ColorSpaceSMPTE170M,
+		ffmpeg.ColorSpaceSMPTE240M,
+		ffmpeg.ColorSpaceBT2020NCL:
+		return true
+	default:
+		// Unknown matrices and transforms that are not non-constant-luminance
+		// YCbCr must use swscale instead of receiving a plausible but incorrect
+		// conversion in the shader.
+		return false
+	}
+}
+
+func copyFramePlane(dst []byte, dstStride, dstOffset int, frame *ffmpeg.FrameWrapper, plane, width, height int) error {
+	src := frame.Data(plane)
+	stride := frame.Linesize(plane)
+	if len(src) == 0 || stride == 0 {
+		return fmt.Errorf("avebi: FFmpeg returned an inaccessible YUV plane %d", plane)
+	}
+	return copyVideoPlaneAt(dst, dstStride, dstOffset, src, stride, width, height)
+}
+
+func copyVideoPlaneAt(dst []byte, dstStride, dstOffset int, src []byte, srcStride, width, height int) error {
+	if width <= 0 || height <= 0 || dstOffset < 0 || dstOffset+width > dstStride {
+		return fmt.Errorf("avebi: invalid YUV plane geometry width=%d height=%d stride=%d", width, height, dstStride)
+	}
+	srcRowStride := srcStride
+	if srcRowStride < 0 {
+		srcRowStride = -srcRowStride
+	}
+	if len(dst) < (height-1)*dstStride+dstOffset+width || len(src) < srcRowStride*height {
+		return fmt.Errorf("avebi: truncated YUV plane width=%d height=%d source_stride=%d", width, height, srcStride)
+	}
+	for row := 0; row < height; row++ {
+		srcRow := row
+		if srcStride < 0 {
+			srcRow = height - 1 - row
+		}
+		dstStart := row*dstStride + dstOffset
+		copy(dst[dstStart:dstStart+width], src[srcRow*srcRowStride:srcRow*srcRowStride+width])
+	}
+	return nil
+}
+
+func yuvColorParameters(spec ffmpeg.ColorSpec) backendVideoColor {
+	color := backendVideoColor{
+		YScale:  255.0 / 219.0,
+		YOffset: 16.0 / 255.0,
+		UVScale: 255.0 / 224.0,
+		UVZero:  128.0 / 255.0,
+	}
+	if spec.Range == ffmpeg.ColorRangeJPEG {
+		color.YScale = 1
+		color.YOffset = 0
+		color.UVScale = 1
+	}
+
+	kr, kb := float32(0.299), float32(0.114)
+	switch spec.Space {
+	case ffmpeg.ColorSpaceBT709:
+		kr, kb = 0.2126, 0.0722
+	case ffmpeg.ColorSpaceFCC:
+		kr, kb = 0.30, 0.11
+	case ffmpeg.ColorSpaceSMPTE240M:
+		kr, kb = 0.212, 0.087
+	case ffmpeg.ColorSpaceBT2020NCL:
+		kr, kb = 0.2627, 0.0593
+	}
+	kg := 1 - kr - kb
+	color.RCr = 2 * (1 - kr)
+	color.BCb = 2 * (1 - kb)
+	color.GCb = -2 * kb * (1 - kb) / kg
+	color.GCr = -2 * kr * (1 - kr) / kg
+	return color
 }
 
 func (d *ffiDecoder) convertAudioFrameLocked(frame *ffmpeg.FrameWrapper) (backendFrame, bool, error) {

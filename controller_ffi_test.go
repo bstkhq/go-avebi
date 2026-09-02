@@ -285,7 +285,7 @@ func TestFFmpegAudioReadDiscardsFrameDecodedBeforeSeek(t *testing.T) {
 		},
 		frame: backendFrame{
 			Kind:  backendFrameVideo,
-			Video: backendVideoFrame{RGBA: pixels, Width: 2, Height: 2, Stride: 8},
+			Video: backendVideoFrame{RGBA: pixels, Width: 2, Height: 2},
 		},
 		readStarted: make(chan struct{}),
 		releaseRead: make(chan struct{}),
@@ -350,7 +350,7 @@ func TestFFmpegAudioReadDoesNotRetainFrameDecodedBeforeClose(t *testing.T) {
 		},
 		frame: backendFrame{
 			Kind:  backendFrameVideo,
-			Video: backendVideoFrame{RGBA: pixels, Width: 2, Height: 2, Stride: 8},
+			Video: backendVideoFrame{RGBA: pixels, Width: 2, Height: 2},
 		},
 		readStarted: make(chan struct{}),
 		releaseRead: make(chan struct{}),
@@ -456,7 +456,7 @@ func TestFFmpegSeekUsesOneContainerSeekAndPreservesPause(t *testing.T) {
 			Kind:     backendFrameVideo,
 			PTS:      target - 20*time.Millisecond,
 			Duration: 40 * time.Millisecond,
-			Video:    backendVideoFrame{RGBA: make([]byte, 16), Width: 2, Height: 2, Stride: 8},
+			Video:    backendVideoFrame{RGBA: make([]byte, 16), Width: 2, Height: 2},
 		}},
 	}
 	controller := newFFmpegLocalController(decoder)

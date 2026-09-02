@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"image/color"
 	"time"
 
@@ -26,6 +27,8 @@ type Player struct {
 	currentPresOffset time.Duration
 	videoCodec        string
 	onBlackFrame      bool
+	yuvShader         *ebiten.Shader
+	yuvImage          *ebiten.Image
 }
 
 func NewPlayer(videoFilename string) (*Player, error) {
@@ -43,6 +46,12 @@ type PlayerOptions struct {
 	// NewPlayer converts the media sample rate and reports the mismatch through
 	// the package Logger.
 	RejectSampleRateMismatch bool
+
+	// UseYUVShader keeps supported 8-bit 4:2:0 video frames in YUV and performs
+	// color conversion on the GPU. Unsupported formats still use the RGBA path.
+	// This is opt-in because chroma upsampling is currently nearest-neighbor;
+	// leave it disabled when matching the bilinear RGBA output is more important.
+	UseYUVShader bool
 }
 
 func NewPlayerWithOptions(videoFilename string, options *PlayerOptions) (*Player, error) {
@@ -59,6 +68,11 @@ func NewStreamPlayer(videoFilename string) (*Player, error) {
 type StreamOptions struct {
 	ConnTimeout time.Duration
 	ReadTimeout time.Duration
+	// UseYUVShader keeps supported 8-bit 4:2:0 video frames in YUV and performs
+	// color conversion on the GPU. Unsupported formats still use the RGBA path.
+	// This is opt-in because chroma upsampling is currently nearest-neighbor;
+	// leave it disabled when matching the bilinear RGBA output is more important.
+	UseYUVShader bool
 }
 
 func NewStreamPlayerWithOptions(videoFilename string, options *StreamOptions) (*Player, error) {
@@ -74,6 +88,11 @@ func NewStreamPlayerWithOptions(videoFilename string, options *StreamOptions) (*
 func newFFmpegPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptions, streamOptions *StreamOptions) (*Player, error) {
 	backend := newMediaBackend()
 	opts := backendOpenOptions{DisableAudio: ignoreAudio}
+	if playerOptions != nil {
+		opts.UseYUVShader = playerOptions.UseYUVShader
+	} else if streamOptions != nil {
+		opts.UseYUVShader = streamOptions.UseYUVShader
+	}
 	if ctx := audio.CurrentContext(); ctx != nil {
 		opts.OutputSampleRate = ctx.SampleRate()
 	}
@@ -116,14 +135,32 @@ func newFFmpegPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptio
 		_ = controller.Close()
 		return nil, ErrNoVideo
 	}
-	image := ebiten.NewImage(info.Video.Width, info.Video.Height)
-	image.Fill(color.Black)
-	return &Player{
+	frameImage := ebiten.NewImageWithOptions(
+		image.Rect(0, 0, info.Video.Width, info.Video.Height),
+		&ebiten.NewImageOptions{Unmanaged: opts.UseYUVShader},
+	)
+	frameImage.Fill(color.Black)
+	player := &Player{
 		controller:   controller,
-		currentFrame: image,
+		currentFrame: frameImage,
 		videoCodec:   info.Video.Codec,
 		onBlackFrame: true,
-	}, nil
+	}
+	if opts.UseYUVShader {
+		shader, err := loadYUV420Shader()
+		if err != nil {
+			frameImage.Deallocate()
+			_ = controller.Close()
+			return nil, fmt.Errorf("compile YUV video shader: %w", err)
+		}
+		player.yuvShader = shader
+		textureWidth, textureHeight := packedYUVTextureSize(info.Video.Width, info.Video.Height)
+		player.yuvImage = ebiten.NewImageWithOptions(
+			image.Rect(0, 0, textureWidth, textureHeight),
+			&ebiten.NewImageOptions{Unmanaged: true},
+		)
+	}
+	return player, nil
 }
 
 func checkSampleRateMismatch(info backendMediaInfo, outputSampleRate int, options *PlayerOptions) error {
@@ -150,13 +187,10 @@ func (p *Player) CurrentFrame() (*ebiten.Image, error) {
 		return p.currentFrame, nil
 	}
 	if frame.PTS != p.currentPresOffset || p.onBlackFrame {
-		expected := 4 * p.currentFrame.Bounds().Dx() * p.currentFrame.Bounds().Dy()
-		if len(frame.Video.RGBA) != expected {
-			return nil, fmt.Errorf("avebi: decoded RGBA frame has %d bytes, expected %d", len(frame.Video.RGBA), expected)
+		if err := p.copyFrame(frame); err != nil {
+			return nil, err
 		}
-		p.currentFrame.WritePixels(frame.Video.RGBA)
 		p.currentPresOffset = frame.PTS
-		p.onBlackFrame = false
 	}
 	return p.currentFrame, nil
 }
@@ -177,7 +211,7 @@ func (p *Player) HasEnded() bool                { return p.controller.HasEnded()
 
 func (p *Player) Play() error {
 	if p.controller.HasEnded() {
-		p.copyFrame(nil)
+		_ = p.copyFrame(nil)
 		p.currentPresOffset = 0
 	}
 	return p.controller.Play()
@@ -187,7 +221,7 @@ func (p *Player) Pause() error { return p.controller.Pause() }
 
 func (p *Player) Stop() error {
 	p.currentPresOffset = 0
-	p.copyFrame(nil)
+	_ = p.copyFrame(nil)
 	return p.controller.Stop()
 }
 
@@ -201,7 +235,15 @@ func (p *Player) SetMuted(muted bool)              { p.controller.SetMuted(muted
 func (p *Player) SetLooping(looping bool)          { p.controller.SetLooping(looping) }
 func (p *Player) GetLooping() bool                 { return p.controller.GetLooping() }
 func (p *Player) Error() error                     { return p.controller.Error() }
-func (p *Player) Close() error                     { return p.controller.Close() }
+func (p *Player) Close() error {
+	err := p.controller.Close()
+	p.currentFrame.Deallocate()
+	if p.yuvImage != nil {
+		p.yuvImage.Deallocate()
+		p.yuvImage = nil
+	}
+	return err
+}
 
 func (p *Player) Seek(position time.Duration) error {
 	frame, err := p.controller.Seek(position)
@@ -209,23 +251,37 @@ func (p *Player) Seek(position time.Duration) error {
 		return err
 	}
 	if frame == nil {
-		p.copyFrame(nil)
+		_ = p.copyFrame(nil)
 		p.currentPresOffset, err = p.controller.Position()
 		return err
 	}
-	p.copyFrame(frame)
+	if err := p.copyFrame(frame); err != nil {
+		return err
+	}
 	p.currentPresOffset = frame.PTS
 	return nil
 }
 
-func (p *Player) copyFrame(frame *backendFrame) {
+func (p *Player) copyFrame(frame *backendFrame) error {
 	if frame == nil {
 		if !p.onBlackFrame {
 			p.currentFrame.Fill(color.Black)
 			p.onBlackFrame = true
 		}
-		return
+		return nil
+	}
+	if frame.Video.Format != backendVideoFormatRGBA && len(frame.Video.YUV) > 0 {
+		if err := p.drawYUVFrame(&frame.Video); err != nil {
+			return err
+		}
+		p.onBlackFrame = false
+		return nil
+	}
+	expected := 4 * p.currentFrame.Bounds().Dx() * p.currentFrame.Bounds().Dy()
+	if len(frame.Video.RGBA) != expected {
+		return fmt.Errorf("avebi: decoded RGBA frame has %d bytes, expected %d", len(frame.Video.RGBA), expected)
 	}
 	p.currentFrame.WritePixels(frame.Video.RGBA)
 	p.onBlackFrame = false
+	return nil
 }
