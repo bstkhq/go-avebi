@@ -35,6 +35,8 @@ type backendOpenOptions struct {
 	ConnTimeout      time.Duration
 	ReadTimeout      time.Duration
 	RTSPTransport    string
+	ProbeSize        int64
+	AnalyzeDuration  time.Duration
 }
 
 type backendMediaInfo struct {

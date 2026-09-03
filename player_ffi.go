@@ -76,6 +76,13 @@ type StreamOptions struct {
 	// long-haul or VPN links, at the cost of some extra latency. The option is
 	// ignored for non-RTSP sources.
 	RTSPTransport string
+	// ProbeSize and AnalyzeDuration cap FFmpeg's stream analysis on open
+	// (probesize / analyzeduration). Zero keeps FFmpeg's defaults. Lowering
+	// them shortens connection and reconnection times on live feeds at the
+	// cost of cruder stream parameter detection, such as the estimated frame
+	// rate.
+	ProbeSize       int64
+	AnalyzeDuration time.Duration
 	// UseYUVShader keeps supported 8-bit 4:2:0 video frames in YUV and performs
 	// color conversion on the GPU. Unsupported formats still use the RGBA path.
 	// This is opt-in because chroma upsampling is currently nearest-neighbor;
@@ -109,6 +116,8 @@ func newFFmpegPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptio
 		opts.ConnTimeout = streamOptions.ConnTimeout
 		opts.ReadTimeout = streamOptions.ReadTimeout
 		opts.RTSPTransport = streamOptions.RTSPTransport
+		opts.ProbeSize = streamOptions.ProbeSize
+		opts.AnalyzeDuration = streamOptions.AnalyzeDuration
 		opts.DisableAudio = true
 	}
 

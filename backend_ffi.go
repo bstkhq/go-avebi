@@ -122,6 +122,12 @@ func ffmpegDecoderOptions(source string, opts backendOpenOptions) *ffmpeg.Decode
 		if opts.ReadTimeout > 0 {
 			decoderOpts.AVOptions["rw_timeout"] = strconv.FormatInt(opts.ReadTimeout.Microseconds(), 10)
 		}
+		if opts.ProbeSize > 0 {
+			decoderOpts.AVOptions["probesize"] = strconv.FormatInt(opts.ProbeSize, 10)
+		}
+		if opts.AnalyzeDuration > 0 {
+			decoderOpts.AVOptions["analyzeduration"] = strconv.FormatInt(opts.AnalyzeDuration.Microseconds(), 10)
+		}
 	}
 	return decoderOpts
 }

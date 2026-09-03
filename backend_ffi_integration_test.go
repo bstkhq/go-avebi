@@ -49,6 +49,27 @@ func TestFFmpegDecoderOptionsRTSPTransport(t *testing.T) {
 	}
 }
 
+func TestFFmpegDecoderOptionsProbeLimits(t *testing.T) {
+	opts := ffmpegDecoderOptions("rtsp://cam.local:554/feed", backendOpenOptions{
+		Live:            true,
+		ProbeSize:       262144,
+		AnalyzeDuration: 500 * time.Millisecond,
+	})
+	if got := opts.AVOptions["probesize"]; got != "262144" {
+		t.Fatalf("probesize = %q, want %q", got, "262144")
+	}
+	if got := opts.AVOptions["analyzeduration"]; got != "500000" {
+		t.Fatalf("analyzeduration = %q, want %q", got, "500000")
+	}
+
+	opts = ffmpegDecoderOptions("rtsp://cam.local:554/feed", backendOpenOptions{Live: true})
+	for _, key := range []string{"probesize", "analyzeduration"} {
+		if _, ok := opts.AVOptions[key]; ok {
+			t.Fatalf("%s set without an explicit limit", key)
+		}
+	}
+}
+
 func TestFFmpegRuntimeMajor(t *testing.T) {
 	value := os.Getenv(expectedFFmpegMajorEnv)
 	if value == "" {
