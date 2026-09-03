@@ -68,6 +68,10 @@ func NewStreamPlayer(videoFilename string) (*Player, error) {
 }
 
 type StreamOptions struct {
+	// ConnTimeout and ReadTimeout both surface as FFmpeg per-operation socket
+	// I/O timeouts (timeout/stimeout and rw_timeout respectively), so reads
+	// stall for at most the smaller of the two; neither bounds only the
+	// connection establishment.
 	ConnTimeout time.Duration
 	ReadTimeout time.Duration
 	// RTSPTransport selects the RTP transport for rtsp:// sources ("tcp",
