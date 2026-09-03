@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -76,7 +75,7 @@ func openFFmpegDecoder(ctx context.Context, source string, opts backendOpenOptio
 		return nil, fmt.Errorf("initialize go-ffmpeg-ffi: %w", err)
 	}
 
-	decoderOpts := ffmpegDecoderOptions(source, opts)
+	decoderOpts := ffmpegDecoderOptions(opts)
 
 	decoder, err := ffmpeg.NewDecoder(source, decoderOpts)
 	if err != nil {
@@ -102,16 +101,28 @@ func openFFmpegDecoder(ctx context.Context, source string, opts backendOpenOptio
 	}, nil
 }
 
-func ffmpegDecoderOptions(source string, opts backendOpenOptions) *ffmpeg.DecoderOptions {
+// minFFmpegProbeSize is the hard minimum FFmpeg accepts for probesize;
+// smaller values fail the open instead of minimizing probing.
+const minFFmpegProbeSize = 32
+
+func ffmpegDecoderOptions(opts backendOpenOptions) *ffmpeg.DecoderOptions {
 	decoderOpts := &ffmpeg.DecoderOptions{
 		Hardware: &ffmpeg.HWDecoderConfig{DeviceManager: sharedFFmpegHWDevices},
 	}
 	if opts.DisableAudio {
 		decoderOpts.Streams = []ffmpeg.MediaType{ffmpeg.MediaTypeVideo}
 	}
+	if opts.ProbeSize > 0 {
+		decoderOpts.ProbeSizeBytes = max(opts.ProbeSize, minFFmpegProbeSize)
+	}
+	if opts.AnalyzeDuration > 0 {
+		decoderOpts.AnalyzeDuration = opts.AnalyzeDuration
+	}
 	if opts.Live {
 		decoderOpts.AVOptions = make(map[string]string)
-		if opts.RTSPTransport != "" && isRTSPSource(source) {
+		if opts.RTSPTransport != "" {
+			// FFmpeg ignores the option for sources the RTSP demuxer
+			// does not handle
 			decoderOpts.AVOptions["rtsp_transport"] = opts.RTSPTransport
 		}
 		if opts.ConnTimeout > 0 {
@@ -122,19 +133,8 @@ func ffmpegDecoderOptions(source string, opts backendOpenOptions) *ffmpeg.Decode
 		if opts.ReadTimeout > 0 {
 			decoderOpts.AVOptions["rw_timeout"] = strconv.FormatInt(opts.ReadTimeout.Microseconds(), 10)
 		}
-		if opts.ProbeSize > 0 {
-			decoderOpts.AVOptions["probesize"] = strconv.FormatInt(opts.ProbeSize, 10)
-		}
-		if opts.AnalyzeDuration > 0 {
-			decoderOpts.AVOptions["analyzeduration"] = strconv.FormatInt(opts.AnalyzeDuration.Microseconds(), 10)
-		}
 	}
 	return decoderOpts
-}
-
-func isRTSPSource(source string) bool {
-	source = strings.ToLower(source)
-	return strings.HasPrefix(source, "rtsp://") || strings.HasPrefix(source, "rtsps://")
 }
 
 func mediaInfoFromFFmpeg(decoder *ffmpeg.Decoder) backendMediaInfo {
