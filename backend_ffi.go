@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,7 +76,7 @@ func openFFmpegDecoder(ctx context.Context, source string, opts backendOpenOptio
 		return nil, fmt.Errorf("initialize go-ffmpeg-ffi: %w", err)
 	}
 
-	decoderOpts := ffmpegDecoderOptions(opts)
+	decoderOpts := ffmpegDecoderOptions(source, opts)
 
 	decoder, err := ffmpeg.NewDecoder(source, decoderOpts)
 	if err != nil {
@@ -101,7 +102,7 @@ func openFFmpegDecoder(ctx context.Context, source string, opts backendOpenOptio
 	}, nil
 }
 
-func ffmpegDecoderOptions(opts backendOpenOptions) *ffmpeg.DecoderOptions {
+func ffmpegDecoderOptions(source string, opts backendOpenOptions) *ffmpeg.DecoderOptions {
 	decoderOpts := &ffmpeg.DecoderOptions{
 		Hardware: &ffmpeg.HWDecoderConfig{DeviceManager: sharedFFmpegHWDevices},
 	}
@@ -110,6 +111,9 @@ func ffmpegDecoderOptions(opts backendOpenOptions) *ffmpeg.DecoderOptions {
 	}
 	if opts.Live {
 		decoderOpts.AVOptions = make(map[string]string)
+		if opts.RTSPTransport != "" && isRTSPSource(source) {
+			decoderOpts.AVOptions["rtsp_transport"] = opts.RTSPTransport
+		}
 		if opts.ConnTimeout > 0 {
 			value := strconv.FormatInt(opts.ConnTimeout.Microseconds(), 10)
 			decoderOpts.AVOptions["timeout"] = value
@@ -120,6 +124,11 @@ func ffmpegDecoderOptions(opts backendOpenOptions) *ffmpeg.DecoderOptions {
 		}
 	}
 	return decoderOpts
+}
+
+func isRTSPSource(source string) bool {
+	source = strings.ToLower(source)
+	return strings.HasPrefix(source, "rtsp://") || strings.HasPrefix(source, "rtsps://")
 }
 
 func mediaInfoFromFFmpeg(decoder *ffmpeg.Decoder) backendMediaInfo {

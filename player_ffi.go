@@ -70,6 +70,12 @@ func NewStreamPlayer(videoFilename string) (*Player, error) {
 type StreamOptions struct {
 	ConnTimeout time.Duration
 	ReadTimeout time.Duration
+	// RTSPTransport selects the RTP transport for rtsp:// sources ("tcp",
+	// "udp", "udp_multicast", "http"). Empty keeps FFmpeg's default, UDP with
+	// TCP fallback. TCP avoids the corrupted frames that packet loss causes on
+	// long-haul or VPN links, at the cost of some extra latency. The option is
+	// ignored for non-RTSP sources.
+	RTSPTransport string
 	// UseYUVShader keeps supported 8-bit 4:2:0 video frames in YUV and performs
 	// color conversion on the GPU. Unsupported formats still use the RGBA path.
 	// This is opt-in because chroma upsampling is currently nearest-neighbor;
@@ -102,6 +108,7 @@ func newFFmpegPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptio
 		opts.Live = true
 		opts.ConnTimeout = streamOptions.ConnTimeout
 		opts.ReadTimeout = streamOptions.ReadTimeout
+		opts.RTSPTransport = streamOptions.RTSPTransport
 		opts.DisableAudio = true
 	}
 

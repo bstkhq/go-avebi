@@ -17,13 +17,35 @@ import (
 const expectedFFmpegMajorEnv = "AVEBI_EXPECT_FFMPEG_MAJOR"
 
 func TestFFmpegDecoderOptionsReuseHardwareDeviceManager(t *testing.T) {
-	first := ffmpegDecoderOptions(backendOpenOptions{})
-	second := ffmpegDecoderOptions(backendOpenOptions{DisableAudio: true})
+	first := ffmpegDecoderOptions("video.mp4", backendOpenOptions{})
+	second := ffmpegDecoderOptions("video.mp4", backendOpenOptions{DisableAudio: true})
 	if first.Hardware == nil || first.Hardware.DeviceManager == nil {
 		t.Fatal("default decoder options do not configure a hardware device manager")
 	}
 	if second.Hardware == nil || second.Hardware.DeviceManager != first.Hardware.DeviceManager {
 		t.Fatal("decoder options do not reuse the process-wide hardware device manager")
+	}
+}
+
+func TestFFmpegDecoderOptionsRTSPTransport(t *testing.T) {
+	live := backendOpenOptions{Live: true, RTSPTransport: "tcp"}
+
+	opts := ffmpegDecoderOptions("rtsp://cam.local:554/feed", live)
+	if got := opts.AVOptions["rtsp_transport"]; got != "tcp" {
+		t.Fatalf("rtsp_transport = %q, want %q", got, "tcp")
+	}
+	opts = ffmpegDecoderOptions("RTSPS://cam.local:554/feed", live)
+	if got := opts.AVOptions["rtsp_transport"]; got != "tcp" {
+		t.Fatalf("rtsps source: rtsp_transport = %q, want %q", got, "tcp")
+	}
+
+	opts = ffmpegDecoderOptions("http://cam.local/stream.ts", live)
+	if _, ok := opts.AVOptions["rtsp_transport"]; ok {
+		t.Fatal("rtsp_transport set for a non-RTSP source")
+	}
+	opts = ffmpegDecoderOptions("rtsp://cam.local:554/feed", backendOpenOptions{Live: true})
+	if _, ok := opts.AVOptions["rtsp_transport"]; ok {
+		t.Fatal("rtsp_transport set without an explicit transport")
 	}
 }
 

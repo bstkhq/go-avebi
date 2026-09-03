@@ -34,6 +34,7 @@ type backendOpenOptions struct {
 	Live             bool
 	ConnTimeout      time.Duration
 	ReadTimeout      time.Duration
+	RTSPTransport    string
 }
 
 type backendMediaInfo struct {
