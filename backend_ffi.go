@@ -101,6 +101,10 @@ func openFFmpegDecoder(ctx context.Context, source string, opts backendOpenOptio
 	}, nil
 }
 
+// minFFmpegProbeSize is the hard minimum FFmpeg accepts for probesize;
+// smaller values fail the open instead of minimizing probing.
+const minFFmpegProbeSize = 32
+
 func ffmpegDecoderOptions(opts backendOpenOptions) *ffmpeg.DecoderOptions {
 	decoderOpts := &ffmpeg.DecoderOptions{
 		Hardware: &ffmpeg.HWDecoderConfig{DeviceManager: sharedFFmpegHWDevices},
@@ -108,8 +112,19 @@ func ffmpegDecoderOptions(opts backendOpenOptions) *ffmpeg.DecoderOptions {
 	if opts.DisableAudio {
 		decoderOpts.Streams = []ffmpeg.MediaType{ffmpeg.MediaTypeVideo}
 	}
+	if opts.ProbeSize > 0 {
+		decoderOpts.ProbeSizeBytes = max(opts.ProbeSize, minFFmpegProbeSize)
+	}
+	if opts.AnalyzeDuration > 0 {
+		decoderOpts.AnalyzeDuration = opts.AnalyzeDuration
+	}
 	if opts.Live {
 		decoderOpts.AVOptions = make(map[string]string)
+		if opts.RTSPTransport != "" {
+			// FFmpeg ignores the option for sources the RTSP demuxer
+			// does not handle
+			decoderOpts.AVOptions["rtsp_transport"] = opts.RTSPTransport
+		}
 		if opts.ConnTimeout > 0 {
 			value := strconv.FormatInt(opts.ConnTimeout.Microseconds(), 10)
 			decoderOpts.AVOptions["timeout"] = value

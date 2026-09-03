@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,47 @@ func TestFFmpegDecoderOptionsReuseHardwareDeviceManager(t *testing.T) {
 	}
 	if second.Hardware == nil || second.Hardware.DeviceManager != first.Hardware.DeviceManager {
 		t.Fatal("decoder options do not reuse the process-wide hardware device manager")
+	}
+}
+
+func TestFFmpegDecoderOptionsRTSPTransport(t *testing.T) {
+	opts := ffmpegDecoderOptions(backendOpenOptions{Live: true, RTSPTransport: "tcp"})
+	if got := opts.AVOptions["rtsp_transport"]; got != "tcp" {
+		t.Fatalf("rtsp_transport = %q, want %q", got, "tcp")
+	}
+	opts = ffmpegDecoderOptions(backendOpenOptions{Live: true})
+	if _, ok := opts.AVOptions["rtsp_transport"]; ok {
+		t.Fatal("rtsp_transport set without an explicit transport")
+	}
+}
+
+func TestFFmpegDecoderOptionsProbeLimits(t *testing.T) {
+	opts := ffmpegDecoderOptions(backendOpenOptions{
+		ProbeSize:       262144,
+		AnalyzeDuration: 500 * time.Millisecond,
+	})
+	if got := opts.ProbeSizeBytes; got != 262144 {
+		t.Fatalf("ProbeSizeBytes = %d, want %d", got, 262144)
+	}
+	if got := opts.AnalyzeDuration; got != 500*time.Millisecond {
+		t.Fatalf("AnalyzeDuration = %s, want %s", got, 500*time.Millisecond)
+	}
+
+	opts = ffmpegDecoderOptions(backendOpenOptions{ProbeSize: 16})
+	if got := opts.ProbeSizeBytes; got != minFFmpegProbeSize {
+		t.Fatalf("ProbeSizeBytes = %d, want FFmpeg minimum %d", got, minFFmpegProbeSize)
+	}
+
+	opts = ffmpegDecoderOptions(backendOpenOptions{})
+	if opts.ProbeSizeBytes != 0 || opts.AnalyzeDuration != 0 {
+		t.Fatal("probe limits set without explicit values")
+	}
+}
+
+func TestStreamOptionsRTSPTransportValidation(t *testing.T) {
+	_, err := NewStreamPlayerWithOptions("rtsp://cam.local:554/feed", &StreamOptions{RTSPTransport: "TCP"})
+	if err == nil || !strings.Contains(err.Error(), "RTSPTransport") {
+		t.Fatalf("invalid transport error = %v, want mention of RTSPTransport", err)
 	}
 }
 

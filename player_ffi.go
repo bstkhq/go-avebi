@@ -68,8 +68,29 @@ func NewStreamPlayer(videoFilename string) (*Player, error) {
 }
 
 type StreamOptions struct {
+	// ConnTimeout and ReadTimeout surface as FFmpeg per-operation socket I/O
+	// timeouts, not connection-establishment bounds: ConnTimeout as the
+	// demuxer "timeout" option, which bounds RTSP TCP socket I/O, and
+	// ReadTimeout as "rw_timeout", which bounds protocols that read through
+	// FFmpeg's I/O layer, such as HTTP. The RTSP demuxer ignores rw_timeout,
+	// so callers tuning stall tolerance should keep both aligned. Over RTSP
+	// with UDP transport, reads may stall unbounded; pair the player with an
+	// application-level frame watchdog.
 	ConnTimeout time.Duration
 	ReadTimeout time.Duration
+	// RTSPTransport selects the RTP transport ("tcp", "udp", "udp_multicast",
+	// "http") for sources handled by FFmpeg's RTSP demuxer; FFmpeg ignores it
+	// elsewhere. Empty keeps FFmpeg's default, UDP with TCP fallback. TCP
+	// avoids the corrupted frames that packet loss causes on lossy links, at
+	// the cost of some extra latency.
+	RTSPTransport string
+	// ProbeSize and AnalyzeDuration cap FFmpeg's stream analysis on open
+	// (probesize / analyzeduration). Zero keeps FFmpeg's defaults, and
+	// ProbeSize is raised to FFmpeg's minimum of 32 bytes. Lowering them
+	// shortens connection and reconnection times on live feeds at the cost of
+	// cruder stream parameter detection, such as the estimated frame rate.
+	ProbeSize       int
+	AnalyzeDuration time.Duration
 	// UseYUVShader keeps supported 8-bit 4:2:0 video frames in YUV and performs
 	// color conversion on the GPU. Unsupported formats still use the RGBA path.
 	// This is opt-in because chroma upsampling is currently nearest-neighbor;
@@ -80,6 +101,11 @@ type StreamOptions struct {
 func NewStreamPlayerWithOptions(videoFilename string, options *StreamOptions) (*Player, error) {
 	if options == nil {
 		options = &StreamOptions{}
+	}
+	switch options.RTSPTransport {
+	case "", "tcp", "udp", "udp_multicast", "http":
+	default:
+		return nil, fmt.Errorf("avebi: invalid StreamOptions.RTSPTransport %q", options.RTSPTransport)
 	}
 	if options.ReadTimeout == 0 {
 		options.ReadTimeout = 200 * time.Millisecond
@@ -102,6 +128,9 @@ func newFFmpegPlayer(source string, ignoreAudio bool, playerOptions *PlayerOptio
 		opts.Live = true
 		opts.ConnTimeout = streamOptions.ConnTimeout
 		opts.ReadTimeout = streamOptions.ReadTimeout
+		opts.RTSPTransport = streamOptions.RTSPTransport
+		opts.ProbeSize = streamOptions.ProbeSize
+		opts.AnalyzeDuration = streamOptions.AnalyzeDuration
 		opts.DisableAudio = true
 	}
 
